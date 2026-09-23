@@ -25,6 +25,7 @@ import {
 import { PersonRecord, FeishuConfigState, CheckinLog } from '../types';
 import { generatePseudo512Vector } from '../utils/faceMatcher';
 import { CheckinDashboard } from './CheckinDashboard';
+import { PersonAvatar } from './PersonAvatar';
 
 interface AdminPanelProps {
   persons: PersonRecord[];
@@ -330,15 +331,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   );
 
   return (
-    <div className="card w-full max-w-4xl mx-auto p-5 sm:p-7 relative text-[#5C5648] space-y-6">
+    <div className="admin-panel card w-full mx-auto p-5 sm:p-7 relative text-[#5C5648] space-y-6">
       {/* 顶部金属回形针装饰 */}
       <div className="paper-clip" />
 
+      {/* 后台也使用手帐页眉，表单和统计仍保持清晰、规整的阅读顺序。 */}
+      <div className="admin-page-heading">
+        <div><span className="journal-eyebrow">THE ORGANIZER / 管理页</span><h1>把每一份到来，收好。</h1></div>
+        <p>人员、记录与同步，在这里有序整理。</p>
+      </div>
       {/* 顶部标签页切换导航 */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#E3DCD1]">
-        <div className="flex flex-wrap items-center gap-1 sm:gap-2 bg-[#F3EFE6] p-1.5 rounded-2xl border border-[#D6CEC1] text-xs">
+        <div className="admin-tabs flex flex-wrap items-center gap-1 sm:gap-2 bg-[#F3EFE6] p-1.5 rounded-2xl border border-[#D6CEC1] text-xs">
           <button
             id="tab-dashboard-btn"
+            aria-pressed={activeTab === 'dashboard'}
             onClick={() => setActiveTab('dashboard')}
             className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl font-gaegu text-base transition-all ${
               activeTab === 'dashboard'
@@ -351,6 +358,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </button>
           <button
             id="tab-users-btn"
+            aria-pressed={activeTab === 'users'}
             onClick={() => setActiveTab('users')}
             className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl font-gaegu text-base transition-all ${
               activeTab === 'users'
@@ -363,6 +371,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </button>
           <button
             id="tab-feishu-btn"
+            aria-pressed={activeTab === 'feishu'}
             onClick={() => setActiveTab('feishu')}
             className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl font-gaegu text-base transition-all ${
               activeTab === 'feishu'
@@ -375,6 +384,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </button>
           <button
             id="tab-logs-btn"
+            aria-pressed={activeTab === 'logs'}
             onClick={() => setActiveTab('logs')}
             className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl font-gaegu text-base transition-all ${
               activeTab === 'logs'
@@ -416,6 +426,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <input
                 id="search-person-input"
                 type="text"
+                aria-label="搜索姓名、学号或班级"
                 placeholder="搜索姓名、学号或班级..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
@@ -448,9 +459,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   className="polaroid-card rounded-xl relative group flex flex-col justify-between"
                 >
                   <div className="flex items-start space-x-3">
-                    <img
+                    <PersonAvatar
                       src={person.avatarUrl}
-                      alt={person.name}
+                      name={person.name}
                       className="w-14 h-14 rounded-lg object-cover border border-[#D6CEC1] shrink-0"
                     />
                     <div className="min-w-0 flex-1">

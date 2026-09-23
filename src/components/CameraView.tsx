@@ -1,19 +1,11 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import {
-  Camera,
-  CameraOff,
-  RefreshCw,
-  FlipHorizontal,
-  AlertTriangle,
-  ShieldCheck,
-  Sparkles,
-  UserCheck
-} from 'lucide-react';
+import { Camera, RefreshCw, FlipHorizontal, AlertTriangle, Sparkles, UserCheck, Check } from 'lucide-react';
 import { captureAndCompressFrame, checkFacePresence } from '../utils/faceMatcher';
 
 interface CameraViewProps {
   onCaptureFrame: (frameBase64: string, imageData: ImageData) => void;
   isProcessing: boolean;
+  isPaused?: boolean;
   statusText: string;
   hasError: boolean;
 }
@@ -21,6 +13,7 @@ interface CameraViewProps {
 export const CameraView: React.FC<CameraViewProps> = ({
   onCaptureFrame,
   isProcessing,
+  isPaused = false,
   statusText,
   hasError
 }) => {
@@ -86,6 +79,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
     }
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      // 明确进入不支持状态，避免一直显示请求中的加载动画。
+      setCameraState('unsupported');
       setErrorMessage('您的浏览器不支持调用摄像头（请确保在 HTTPS 或 localhost 环境下访问）');
       return;
     }
@@ -188,7 +183,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
   // 手动截帧打卡
   const handleManualCapture = () => {
-    if (!videoRef.current || cameraState !== 'active' || isProcessing) return;
+    if (!videoRef.current || cameraState !== 'active' || isProcessing || isPaused) return;
 
     // 触发拍照闪光反馈
     setIsFlashActive(true);
@@ -207,7 +202,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
   // 自动检测轮询（每 1.2 秒检测画面是否有面部变化并尝试比对）
   useEffect(() => {
-    if (!isAutoDetect || cameraState !== 'active' || isProcessing) {
+    // 结果卡片展示期间暂停自动识别，避免新一轮检测覆盖当前反馈。
+    if (!isAutoDetect || cameraState !== 'active' || isProcessing || isPaused) {
       if (autoDetectTimerRef.current) {
         clearInterval(autoDetectTimerRef.current);
         autoDetectTimerRef.current = null;
@@ -232,229 +228,66 @@ export const CameraView: React.FC<CameraViewProps> = ({
         clearInterval(autoDetectTimerRef.current);
       }
     };
-  }, [isAutoDetect, cameraState, isProcessing, onCaptureFrame]);
+  }, [isAutoDetect, cameraState, isProcessing, isPaused, onCaptureFrame]);
 
   return (
-    <div
-      id="camera-container"
-      className="card w-full max-w-[420px] mx-auto p-4 sm:p-5 relative transition-all"
-    >
-      {/* 顶部复古手账金属别针装饰（纤细素雅、顺眼自然） */}
-      <div
-        className="paper-clip-badge absolute -top-2.5 left-1/2 -translate-x-1/2 z-25 pointer-events-none select-none flex items-center justify-center opacity-85 transition-opacity"
-        title="手账回形针"
-      >
-        <svg
-          width="15"
-          height="32"
-          viewBox="0 0 16 34"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-          className="filter drop-shadow-[0.5px_1px_1px_rgba(92,86,72,0.18)] -rotate-2"
-        >
-          <defs>
-            <linearGradient id="naturalMetalClip" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#DFD8CD" />
-              <stop offset="40%" stopColor="#BDB3A3" />
-              <stop offset="80%" stopColor="#9C9282" />
-              <stop offset="100%" stopColor="#7E7566" />
-            </linearGradient>
-          </defs>
-          {/* 回形针纤细单线圈结构 */}
-          <path
-            d="M 6 12.5 V 23 C 6 25.8 10 25.8 10 23 V 7.5 C 10 3.8 3.5 3.8 3.5 7.5 V 25.5 C 3.5 31 12.5 31 12.5 25.5 V 10"
-            stroke="url(#naturalMetalClip)"
-            strokeWidth="1.45"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          {/* 极其微弱的顶端高光 */}
-          <path
-            d="M 7.8 4.6 C 6.5 4.6 4.8 5.1 4.2 6.8"
-            stroke="#FFFFFF"
-            strokeWidth="0.7"
-            strokeLinecap="round"
-            opacity="0.65"
-          />
-        </svg>
+    <div id="camera-container" className="camera-polaroid">
+      <div className="camera-washi" aria-hidden="true" />
+      <div className="camera-toolbar">
+        <span className="camera-state"><span className={`small-dot ${cameraState === 'active' ? 'is-live' : ''}`} />
+          {cameraState === 'active' ? (facingMode === 'user' ? '前置取景中' : '后置取景中') : cameraState === 'requesting' ? '正在连接镜头' : '镜头尚未连接'}
+        </span>
+        <button id="toggle-facing-camera-btn" type="button" onClick={toggleFacingMode} disabled={cameraState !== 'active' || isProcessing} className="camera-flip" title="切换前后置镜头">
+          <FlipHorizontal size={15} /><span>翻转镜头</span>
+        </button>
       </div>
 
-      {/* 取景框顶部微型状态与操作栏 */}
-      <div className="flex items-center justify-between pb-3 px-1 text-xs">
-        <div className="flex items-center space-x-1.5 font-gaegu text-base text-[#5C5648]">
-          <span
-            className={`w-2 h-2 rounded-full inline-block ${
-              cameraState === 'active'
-                ? isProcessing
-                  ? 'bg-[#E5A99B] animate-ping'
-                  : 'bg-[#7EA885] animate-pulse'
-                : 'bg-[#C27D6B]'
-            }`}
-          />
-          <span className="font-semibold">
-            {cameraState === 'active'
-              ? facingMode === 'user'
-                ? '前置取景中'
-                : '后置环境镜头'
-              : '取景器待命'}
-          </span>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          {/* 切换前后置镜头 */}
-          <button
-            id="toggle-facing-camera-btn"
-            type="button"
-            onClick={toggleFacingMode}
-            className="p-1.5 rounded-lg border border-[#D6CEC1] bg-[#F3EFE6] hover:bg-[#EAE3D6] text-[#5C5648] transition-all active:scale-95 flex items-center space-x-1"
-            title="切换前后置镜头"
-          >
-            <FlipHorizontal className="w-3.5 h-3.5 text-[#B25A45]" />
-            <span className="font-gaegu text-sm">翻转镜头</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 相机视窗（采用 Variation 7 的拍立得纸张嵌入风格） */}
-      <div
-        style={{
-          aspectRatio: '4/5',
-          background: '#EEE8DE',
-          borderRadius: '16px',
-          border: '3px solid #D6CEC1',
-          overflow: 'hidden',
-          position: 'relative'
-        }}
-        className="w-full flex items-center justify-center shadow-inner"
-      >
-        {/* 实时视频 */}
-        <video
-          ref={videoRef}
-          playsInline
-          muted
-          autoPlay
-          className={`w-full h-full object-cover transform ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
-        />
-
-        {/* 拍照快门白色闪光反馈 */}
-        {isFlashActive && (
-          <div className="absolute inset-0 bg-white/90 z-40 animate-out fade-out duration-200 pointer-events-none" />
-        )}
-
-        {/* 拍立得复古对准参考框 */}
+      <div className="camera-viewport">
+        <video ref={videoRef} playsInline muted autoPlay aria-label="摄像头实时取景" className={`camera-video ${facingMode === 'user' ? 'camera-mirrored' : ''}`} />
+        {isFlashActive && <div className="camera-flash" aria-hidden="true" />}
         {cameraState === 'active' && (
-          <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
-            <div className="relative w-56 h-72 sm:w-64 sm:h-80">
-              {/* 椭圆参考轮廓（带有复古手绘邮票感边框） */}
-              <div
-                className={`w-full h-full rounded-[50%/40%] border-2 transition-colors duration-300 ${
-                  hasError
-                    ? 'border-[#C27D6B] shadow-[0_0_15px_rgba(194,125,107,0.4)]'
-                    : isProcessing
-                    ? 'border-[#E5A99B] border-dashed shadow-[0_0_20px_rgba(229,169,155,0.6)]'
-                    : 'border-[#7EA885]/80 shadow-[0_0_12px_rgba(126,168,133,0.3)]'
-                }`}
-              >
-                {/* 扫描线动画 */}
-                {isProcessing && (
-                  <div className="w-full h-1 bg-gradient-to-r from-transparent via-[#E5A99B] to-transparent shadow-[0_0_8px_#E5A99B] animate-[bounce_1.5s_infinite]" />
-                )}
-              </div>
-
-              {/* 四角定位十字标 */}
-              <div className="absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 border-[#5C5648]/60 rounded-tl -translate-x-1.5 -translate-y-1.5" />
-              <div className="absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 border-[#5C5648]/60 rounded-tr translate-x-1.5 -translate-y-1.5" />
-              <div className="absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 border-[#5C5648]/60 rounded-bl -translate-x-1.5 translate-y-1.5" />
-              <div className="absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 border-[#5C5648]/60 rounded-br translate-x-1.5 translate-y-1.5" />
-
-              {/* 顶部引导小标签 */}
-              <div className="absolute -top-7 inset-x-0 text-center">
-                <span className="font-gaegu text-xs text-[#5C5648] bg-[#FFFCF8]/90 px-2.5 py-0.5 rounded-full border border-[#D6CEC1] shadow-xs">
-                  人脸请居中对准参考线
-                </span>
-              </div>
-            </div>
+          <div className={`camera-overlay ${hasError ? 'has-error' : ''}`} aria-hidden="true">
+            <span className="viewfinder-label">请将面部对准参考框</span>
+            <div className={`face-guide ${isProcessing ? 'is-scanning' : ''}`}><i /><i /><i /><i />{isProcessing && <span className="scan-line" />}</div>
           </div>
         )}
 
-        {/* 摄像头受阻 / 未就绪状态视图（直接对齐 Variation 7 的设计规范） */}
         {cameraState !== 'active' && (
-          <div className="absolute inset-0 bg-[#EEE8DE] flex flex-col items-center justify-center p-6 text-center z-30 space-y-3 font-gaegu">
+          <div className="camera-placeholder" role="status">
+            <span className="placeholder-corner corner-tl" aria-hidden="true" /><span className="placeholder-corner corner-tr" aria-hidden="true" />
+            <span className="placeholder-corner corner-bl" aria-hidden="true" /><span className="placeholder-corner corner-br" aria-hidden="true" />
+            <div className="camera-illustration" aria-hidden="true"><Camera size={48} strokeWidth={1.15} /><span className="illustration-spark">✳</span></div>
+            <span className="placeholder-eyebrow">A MOMENT FOR TODAY</span>
+            <h2>{cameraState === 'requesting' ? '和今天，打个照面' : '镜头里的你，即将登场'}</h2>
+            <p>{cameraState === 'requesting' ? '正在连接摄像头，请在浏览器提示中选择“允许”。' : errorMessage}</p>
             {cameraState === 'requesting' ? (
-              <>
-                <RefreshCw className="w-9 h-9 text-[#B25A45] animate-spin" />
-                <p className="text-lg text-[#5C5648]">正在调起手机摄像头...</p>
-                <p className="text-xs font-sans text-[#8E8675]">若弹出权限提示，请点击“允许”</p>
-              </>
+              <span className="camera-connecting"><RefreshCw size={14} className="animate-spin" /> 等待摄像头授权</span>
             ) : (
-              <>
-                <div style={{ color: '#A59E92' }} className="flex flex-col items-center justify-center space-y-2">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                    <circle cx="12" cy="13" r="4" />
-                  </svg>
-                  <p className="text-base text-[#8E8675]">Waiting for connection...</p>
-                </div>
-                <p className="text-xs font-sans text-[#7D7667] max-w-xs leading-relaxed px-2">
-                  {errorMessage}
-                </p>
-                <div className="flex items-center justify-center pt-1 font-sans">
-                  <button
-                    id="retry-camera-btn"
-                    onClick={startCamera}
-                    className="stamp-button px-4 py-2 rounded-lg text-sm font-medium text-[#4A453B] flex items-center space-x-1.5"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>释放并重新连接摄像头</span>
-                  </button>
-                </div>
-              </>
+              <button id="retry-camera-btn" onClick={startCamera} className="camera-retry"><RefreshCw size={15} /><span>重新连接摄像头</span></button>
             )}
+            <span className="placeholder-footnote">自然一点，微笑就好。</span>
           </div>
         )}
       </div>
 
-      {/* 实时状态提示条 */}
-      <div className="mt-3 px-3 py-1.5 rounded-xl bg-[#F4EFE6] border border-[#E3DCD1] flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2 truncate">
-          {isProcessing ? (
-            <Sparkles className="w-4 h-4 text-[#E5A99B] animate-spin shrink-0" />
-          ) : hasError ? (
-            <AlertTriangle className="w-4 h-4 text-[#C27D6B] shrink-0" />
-          ) : (
-            <ShieldCheck className="w-4 h-4 text-[#7EA885] shrink-0" />
-          )}
-          <span className={`font-gaegu text-base truncate ${hasError ? 'text-[#C27D6B]' : 'text-[#4A453B]'}`}>
-            {statusText}
-          </span>
-        </div>
-        <span className="mono text-[10px] shrink-0 ml-2">640×480</span>
+      <div className={`capture-status ${hasError ? 'has-error' : ''}`} role="status" aria-live="polite">
+        {isProcessing ? <Sparkles size={16} className="animate-pulse" /> : hasError ? <AlertTriangle size={16} /> : <SmileIcon />}
+        <span>{cameraState === 'active' || isProcessing || hasError ? statusText : '准备好后，留下今天的第一份记录'}</span>
       </div>
-
-      {/* Variation 7 标志性双邮票按钮网格 (Stamp Buttons) */}
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <button
-          id="toggle-auto-detect-btn"
-          type="button"
-          onClick={() => setIsAutoDetect(!isAutoDetect)}
-          className={`stamp-button py-3 px-2 rounded-xl text-lg flex items-center justify-center space-x-1.5 ${
-            isAutoDetect ? 'bg-[rgba(229,169,155,0.22)] font-bold' : 'opacity-70'
-          }`}
-        >
-          <span>{isAutoDetect ? '● 自动感应中' : '○ 自动感应关'}</span>
+      <button id="manual-checkin-btn" type="button" onClick={handleManualCapture} disabled={cameraState !== 'active' || isProcessing || isPaused} className="checkin-button">
+        {isProcessing ? <RefreshCw size={19} className="animate-spin" /> : <UserCheck size={19} />}<span>{isProcessing ? '正在识别，请稍候…' : '微笑，签到'}</span><span className="button-arrow" aria-hidden="true">↗</span>
+      </button>
+      <div className="camera-bottomline">
+        <button id="toggle-auto-detect-btn" type="button" role="switch" aria-checked={isAutoDetect} aria-label="自动签到" onClick={() => setIsAutoDetect(!isAutoDetect)} className="auto-detect-toggle">
+          <span className={`toggle-track ${isAutoDetect ? 'is-on' : ''}`} aria-hidden="true"><span>{isAutoDetect && <Check size={9} />}</span></span>
+          <span>自动签到{isAutoDetect ? '已开启' : '已关闭'}</span>
         </button>
-
-        <button
-          id="manual-checkin-btn"
-          type="button"
-          onClick={handleManualCapture}
-          disabled={cameraState !== 'active' || isProcessing}
-          className="stamp-button stamp-button-primary py-3 px-2 rounded-xl text-lg font-bold flex items-center justify-center space-x-1.5"
-        >
-          <UserCheck className="w-4 h-4" />
-          <span>{isProcessing ? '比对中...' : '手动签到'}</span>
-        </button>
+        <span>保持面部清晰</span>
       </div>
     </div>
   );
 };
+
+function SmileIcon() {
+  return <span className="status-smile" aria-hidden="true">☺</span>;
+}

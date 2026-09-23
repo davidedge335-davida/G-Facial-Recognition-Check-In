@@ -35,20 +35,23 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
     if (username.trim() === validUsername && password === validPassword) {
       onLoginSuccess();
     } else {
-      setErrorMessage('用户名或密码错误，请核对后重试（初始账号：admin，密码：admin123）');
+      setErrorMessage('用户名或密码错误，请核对后重试');
     }
   };
 
+  // 演示提示仅针对未修改的默认凭证，不展示用户后来设置的密码。
+  const hasDefaultCredentials = validUsername === 'admin' && validPassword === 'admin123';
   const handleFillDefaults = () => {
-    setUsername(validUsername);
-    setPassword(validPassword);
+    if (!hasDefaultCredentials) return;
+    setUsername('admin');
+    setPassword('admin123');
     setErrorMessage('');
   };
 
   return (
     <div className="w-full max-w-md mx-auto py-8 px-4">
       {/* 登录卡片 */}
-      <div className="card p-6 sm:p-8 relative space-y-6">
+      <div className="admin-login card p-6 sm:p-8 relative space-y-6">
         {/* 顶部金属回形针装饰 */}
         <div className="paper-clip" />
 
@@ -58,36 +61,25 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
             <Lock className="w-7 h-7" />
           </div>
           <h2 className="font-gaegu text-3xl font-bold text-[#4A453B]">
-            管理后台验证
+            翻开管理手帐
           </h2>
           <p className="mono text-xs text-[#8E8675] uppercase tracking-wider">
-            INSIGHTFACE X FEISHU · /ADMIN
+            THE ORGANIZER · 管理员登录
           </p>
         </div>
 
-        {/* 初始账号密码提示徽章 */}
-        <div className="p-3 rounded-xl bg-[#F4EFE6] border border-[#D6CEC1] space-y-1.5 text-xs text-[#5C5648]">
-          <div className="flex items-center space-x-1.5 text-[#B25A45] font-bold font-gaegu text-base">
-            <ShieldCheck className="w-4 h-4" />
-            <span>初始凭证已就绪</span>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-[11px] mono text-[#7D7667]">
-            <span>账号: <strong className="text-[#4A453B]">{validUsername}</strong></span>
-            <span>密码: <strong className="text-[#4A453B]">{validPassword}</strong></span>
-          </div>
-          <button
-            type="button"
-            id="fill-default-creds-btn"
-            onClick={handleFillDefaults}
-            className="w-full mt-1 py-1 px-2 rounded-lg bg-[#FFFCF8] hover:bg-[#EEE8DE] border border-[#D6CEC1] text-[#5C5648] text-[11px] font-gaegu text-sm transition-all"
-          >
-            一键填入初始账号密码
-          </button>
-        </div>
+        {/* 默认凭证收进说明折页，避免抢占登录主操作的视觉层级。 */}
+        {hasDefaultCredentials && (
+          <details className="rounded-lg border border-[#D6CEC1] bg-[#F4F1E7] p-3 text-xs">
+            <summary className="cursor-pointer text-[#637255]">首次体验？查看本机演示账号</summary>
+            <p className="py-3 text-[#6B705F]">账号：admin · 密码：admin123</p>
+            <button type="button" id="fill-default-creds-btn" onClick={handleFillDefaults} className="journal-link">填入演示账号 <ArrowLeft className="w-3 h-3 rotate-180" /></button>
+          </details>
+        )}
 
         {/* 错误提示 */}
         {errorMessage && (
-          <div className="p-2.5 rounded-xl bg-[#F8EAE7] border border-[#E5A99B] text-xs text-[#C27D6B] flex items-start space-x-2">
+          <div role="alert" className="p-2.5 rounded-xl bg-[#F8EAE7] border border-[#E5A99B] text-xs text-[#C27D6B] flex items-start space-x-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{errorMessage}</span>
           </div>
@@ -96,12 +88,13 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         {/* 登录表单 */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1">
-            <label className="font-gaegu text-base text-[#4A453B] font-semibold flex items-center space-x-1">
+            <label htmlFor="admin-username-input" className="font-gaegu text-base text-[#4A453B] font-semibold flex items-center space-x-1">
               <User className="w-3.5 h-3.5 text-[#8E8675]" />
               <span>管理员账号</span>
             </label>
             <input
               id="admin-username-input"
+              autoComplete="username"
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
@@ -112,13 +105,14 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
           </div>
 
           <div className="space-y-1">
-            <label className="font-gaegu text-base text-[#4A453B] font-semibold flex items-center space-x-1">
+            <label htmlFor="admin-password-input" className="font-gaegu text-base text-[#4A453B] font-semibold flex items-center space-x-1">
               <KeyRound className="w-3.5 h-3.5 text-[#8E8675]" />
               <span>登录密码</span>
             </label>
             <div className="relative">
               <input
                 id="admin-password-input"
+                autoComplete="current-password"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
@@ -127,6 +121,8 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
               />
               <button
                 type="button"
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                aria-pressed={showPassword}
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8E8675] hover:text-[#4A453B]"
               >

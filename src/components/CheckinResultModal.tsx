@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import {
-  CheckCircle2,
   AlertCircle,
   Clock,
   Send,
   X,
   Building2,
   ArrowRight,
-  Stamp,
   Award
 } from 'lucide-react';
 import { CheckinResultState } from '../types';
+import { JournalDialog } from './JournalDialog';
+import { PersonAvatar } from './PersonAvatar';
 
 interface CheckinResultModalProps {
   result: CheckinResultState | null;
@@ -28,15 +28,13 @@ export const CheckinResultModal: React.FC<CheckinResultModalProps> = ({ result, 
       setCountdown(prev => Math.max(0, prev - 1));
     }, 1000);
 
-    return () => clearInterval(timer);
-  }, [result]);
-
-  // 当倒计时归零时，通过独立副作用安全触发 onClose
-  useEffect(() => {
-    if (countdown === 0 && result && (result.status === 'success' || result.status === 'repeated')) {
-      onClose();
-    }
-  }, [countdown, result, onClose]);
+    // 自动关闭与倒计时共用同一轮结果的生命周期，避免上一轮的 0 秒立即关闭新结果。
+    const closeTimer = window.setTimeout(onClose, 5000);
+    return () => {
+      clearInterval(timer);
+      window.clearTimeout(closeTimer);
+    };
+  }, [result, onClose]);
 
   if (!result || result.status === 'idle' || result.status === 'scanning') return null;
 
@@ -45,11 +43,7 @@ export const CheckinResultModal: React.FC<CheckinResultModalProps> = ({ result, 
   const isFail = result.status === 'not_found' || result.status === 'error';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#4A453B]/50 backdrop-blur-xs animate-in fade-in duration-200">
-      <div
-        id="checkin-result-card"
-        className="card w-full max-w-sm p-6 relative overflow-visible text-[#5C5648] flex flex-col items-center text-center space-y-4 shadow-2xl"
-      >
+    <JournalDialog id="checkin-result-card" labelledBy="result-title" onClose={onClose} className="result-card w-full max-w-sm p-6 relative text-[#5C5648] flex flex-col items-center text-center space-y-4">
         {/* 和纸胶带装饰 (Washi Tape) */}
         <div
           className="washi-tape"
@@ -59,6 +53,7 @@ export const CheckinResultModal: React.FC<CheckinResultModalProps> = ({ result, 
         {/* 顶部关闭按钮 */}
         <button
           id="close-result-modal-btn"
+          aria-label="关闭签到结果"
           onClick={onClose}
           className="absolute top-3.5 right-3.5 p-1.5 text-[#8E8675] hover:text-[#4A453B] rounded-full hover:bg-[#EEE8DE] transition-colors"
         >
@@ -68,29 +63,29 @@ export const CheckinResultModal: React.FC<CheckinResultModalProps> = ({ result, 
         {/* 复古印章 (Vintage Stamp Badge) */}
         <div className="pt-2">
           {isSuccess && (
-            <div className="vintage-stamp-green px-4 py-1.5 text-xl font-bold tracking-wide shadow-xs">
+            <div className="vintage-stamp-green px-3 py-1.5 text-sm font-bold tracking-wide shadow-xs">
               <Award className="w-5 h-5 mr-1 text-[#4C7253]" />
-              <span>APPROVED · 签到成功</span>
+              <span>签到成功 · CHECKED IN</span>
             </div>
           )}
           {isRepeated && (
-            <div className="vintage-stamp px-4 py-1.5 text-xl font-bold tracking-wide shadow-xs">
+            <div className="vintage-stamp px-3 py-1.5 text-sm font-bold tracking-wide shadow-xs">
               <Clock className="w-5 h-5 mr-1 text-[#B25A45]" />
-              <span>COOLDOWN · 已签到</span>
+              <span>已记录 · CHECKED</span>
             </div>
           )}
           {isFail && (
-            <div className="vintage-stamp px-4 py-1.5 text-xl font-bold tracking-wide shadow-xs">
+            <div className="vintage-stamp px-3 py-1.5 text-sm font-bold tracking-wide shadow-xs">
               <AlertCircle className="w-5 h-5 mr-1 text-[#C27D6B]" />
-              <span>UNMATCHED · 未通过</span>
+              <span>再试一次 · TRY AGAIN</span>
             </div>
           )}
         </div>
 
         {/* 标题与描述 */}
         <div className="space-y-1">
-          <h2 className="text-2xl font-bold font-gaegu text-[#4A453B]">
-            {isSuccess ? '打卡记录已生成！' : isRepeated ? '请勿重复刷脸' : '未匹配到底库人员'}
+          <h2 id="result-title" className="result-heading">
+            {isSuccess ? '今天的到来，记下了。' : isRepeated ? '已经记下你的到来。' : '还没有认出你'}
           </h2>
           <p className="text-xs text-[#8E8675] max-w-xs leading-relaxed">{result.message}</p>
         </div>
@@ -99,9 +94,9 @@ export const CheckinResultModal: React.FC<CheckinResultModalProps> = ({ result, 
         {result.user && (
           <div className="w-full polaroid-card rounded-xl text-left space-y-2 border border-[#E3DCD1]">
             <div className="flex items-center space-x-3 pb-2 border-b border-[#EEE8DE]">
-              <img
+              <PersonAvatar
                 src={result.user.avatarUrl}
-                alt={result.user.name}
+                name={result.user.name}
                 className="w-12 h-12 rounded-lg object-cover border border-[#D6CEC1] shrink-0"
               />
               <div className="min-w-0 flex-1">
@@ -169,10 +164,9 @@ export const CheckinResultModal: React.FC<CheckinResultModalProps> = ({ result, 
           onClick={onClose}
           className="stamp-button stamp-button-primary w-full py-2.5 rounded-xl text-xl font-bold flex items-center justify-center space-x-1.5"
         >
-          <span>确认知道了 ({countdown}s)</span>
+          <span>{isSuccess || isRepeated ? `收好记录 (${countdown}s)` : '返回，再试一次'}</span>
           <ArrowRight className="w-4 h-4" />
         </button>
-      </div>
-    </div>
+    </JournalDialog>
   );
 };

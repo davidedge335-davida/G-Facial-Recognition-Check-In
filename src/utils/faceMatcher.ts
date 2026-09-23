@@ -10,14 +10,14 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfigState = {
   tableId: '',
 };
 
-// 预设人员示例数据
+// 预设人员示例数据；头像随站点提供，避免外部图床失败导致相册空白。
 export const INITIAL_PERSONS: PersonRecord[] = [
   {
     id: 'user_001',
     name: '张子豪',
     studentId: '20240101',
     department: '计算机学院 / 软件工程2401班',
-    avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=400&q=80',
+    avatarUrl: '/images/demo-zhang.jpg',
     embedding: generatePseudo512Vector('user_001_zhangzihao'),
     createdAt: '2026-09-20 10:00:00'
   },
@@ -26,7 +26,7 @@ export const INITIAL_PERSONS: PersonRecord[] = [
     name: '林雨薇',
     studentId: '20240102',
     department: '人工智能学院 / 智能科学2402班',
-    avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=400&q=80',
+    avatarUrl: '/images/demo-lin.jpg',
     embedding: generatePseudo512Vector('user_002_linyuwei'),
     createdAt: '2026-09-21 09:15:00'
   },
@@ -35,7 +35,7 @@ export const INITIAL_PERSONS: PersonRecord[] = [
     name: '陈博文',
     studentId: '20240103',
     department: '电子工程系 / 微电子2401班',
-    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
+    avatarUrl: '/images/demo-chen.jpg',
     embedding: generatePseudo512Vector('user_003_chenbowen'),
     createdAt: '2026-09-21 14:20:00'
   }

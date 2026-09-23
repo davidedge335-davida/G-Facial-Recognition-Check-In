@@ -1,25 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Smartphone,
-  Settings,
-  Sparkles,
-  ShieldCheck,
-  Send,
-  Users,
-  CheckCircle2,
-  AlertCircle,
-  HelpCircle,
-  Clock,
-  FlipHorizontal,
-  ArrowLeft,
-  KeyRound,
-  LogOut,
-  X,
-  Lock
-} from 'lucide-react';
-import { CameraView } from './components/CameraView';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { ArrowLeft, KeyRound, LogOut, X } from 'lucide-react';
+import { NotebookHome } from './components/NotebookHome';
 import { CheckinResultModal } from './components/CheckinResultModal';
-import { AdminPanel } from './components/AdminPanel';
 import { AdminLoginView } from './components/AdminLoginView';
 import { HttpsGuideModal } from './components/HttpsGuideModal';
 import { PersonRecord, CheckinLog, FeishuConfigState, CheckinResultState } from './types';
@@ -30,6 +12,9 @@ import {
   calculateCosineSimilarity,
   checkDuplicateCheckin
 } from './utils/faceMatcher';
+
+// 图表与后台表单仅在管理员进入后加载，缩小日常签到首页的首屏脚本。
+const AdminPanel = lazy(() => import('./components/AdminPanel').then(module => ({ default: module.AdminPanel })));
 
 export default function App() {
   // 路由状态：检测是否访问 /admin
@@ -202,7 +187,7 @@ export default function App() {
       if (isProcessing) return;
       setIsProcessing(true);
       setHasError(false);
-      setStatusText('正在提取 512 维人脸特征并比对...');
+      setStatusText('正在识别人脸，请稍候…');
 
       try {
         // 首先尝试调用后端 FastAPI /api/checkin 接口
@@ -344,7 +329,7 @@ export default function App() {
           setStatusText(`签到成功：${matchedPerson.name}`);
           setCheckinResult({
             status: 'success',
-            message: '人脸比对通过，签到数据已成功同步！',
+            message: feishuSynced ? '签到已完成，记录已同步到飞书。' : '签到已完成，记录已保存在本机。',
             user: matchedPerson,
             similarity,
             checkinTime: nowStr,
@@ -358,7 +343,7 @@ export default function App() {
           setStatusText('未匹配到人员，请联系管理员录入照片');
           setCheckinResult({
             status: 'not_found',
-            message: `当前人脸与底库所有人员相似度最高为 ${(similarity * 100).toFixed(1)}%（低于 60% 阈值），请确认已在管理后台录入底库。`,
+            message: '还没有找到你的记录。请调整光线并重试，或联系管理员录入照片。',
             similarity
           });
         }
@@ -406,20 +391,21 @@ export default function App() {
         department: person.department,
         similarity: 0.965,
         checkinTime: nowStr,
-        feishuStatus: feishuConfig.enabled && feishuConfig.webhookUrl ? 'SUCCESS' : 'LOCAL_SAVED'
+        // 体验按钮没有发送请求，不能显示为已经同步飞书。
+        feishuStatus: 'LOCAL_SAVED'
       };
       setLogs(prev => [newLog, ...prev]);
 
       setIsProcessing(false);
       setCheckinResult({
         status: 'success',
-        message: '人脸比对通过，签到数据已成功记录！',
+        message: '这是一条模拟签到，体验记录已保存在本机。',
         user: person,
         similarity: 0.965,
         checkinTime: nowStr,
         isRepeated: false,
-        feishuSynced: feishuConfig.enabled,
-        feishuMsg: feishuConfig.enabled ? '已推送到飞书妙搭' : '飞书未配置'
+        feishuSynced: false,
+        feishuMsg: '体验记录仅保存在本机，未发送到飞书'
       });
     }, 600);
   };
@@ -432,110 +418,24 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col font-sans bg-[#f7f7ef] selection:bg-[#E5A99B]/30 selection:text-[#4A453B]">
+    <div className="app-shell min-h-screen flex flex-col">
       {/* ---------------- 界面 1：刷脸签到主界面 (/) ---------------- */}
       {!isAdminRoute ? (
-        <>
-          {/* 顶部活页笔记本 Header（完整适配手机端宽度，与网页底色 #f7f7ef 无缝相接） */}
-          <header className="w-full flex flex-col items-center pt-0 px-0 relative bg-[#f7f7ef]">
-            <div className="w-full max-w-[480px] mx-auto overflow-hidden">
-              <img
-                id="notebook-header-banner"
-                src="/maolasong-notebook-header-OYYDUDEX-1.png"
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  if (!target.dataset.tried) {
-                    target.dataset.tried = 'true';
-                    target.src = '/zamaolasong-notebook-header-OYYDUDEX-1.png';
-                  }
-                }}
-                alt="今日露脸签到册"
-                width={1500}
-                height={480}
-                className="w-full h-auto block select-none pointer-events-none"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-          </header>
-
-          {/* 刷脸签到主视图 */}
-          <main className="flex-1 max-w-4xl w-full mx-auto px-4 pt-2 pb-6 sm:p-6 flex flex-col justify-start">
-            <div className="flex flex-col items-center justify-center space-y-4">
-              {/* 顶栏便签提示与状态徽章 */}
-              <div className="w-full max-w-[420px] flex items-center justify-between px-1">
-                <span className="vintage-stamp-green text-sm px-2.5 py-0.5">
-                  底库就绪: {persons.length} 人
-                </span>
-
-                <button
-                  id="open-guide-btn"
-                  onClick={() => setIsHttpsGuideOpen(true)}
-                  className="font-gaegu text-base text-[#8E8675] hover:text-[#4A453B] flex items-center space-x-1 underline decoration-dashed"
-                >
-                  <HelpCircle className="w-4 h-4 text-[#B25A45]" />
-                  <span>手机调用提示</span>
-                </button>
-              </div>
-
-              {/* 核心打卡组件 */}
-              <CameraView
-                onCaptureFrame={handleCaptureFrame}
-                isProcessing={isProcessing}
-                statusText={statusText}
-                hasError={hasError}
-              />
-
-              {/* 快速体验拍立得相册卡片区 */}
-              <div className="w-full max-w-[420px] card p-4 space-y-2.5 relative">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-gaegu text-lg font-bold text-[#4A453B]">
-                    快速体验：点击人员模拟刷脸
-                  </span>
-                  <span className="mono text-[10px] text-[#8E8675]">免摄像头体验</span>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2.5">
-                  {persons.slice(0, 3).map(person => (
-                    <button
-                      key={person.id}
-                      onClick={() => handleSimulateCheckin(person)}
-                      disabled={isProcessing}
-                      className="polaroid-card rounded-lg flex flex-col items-center space-y-1 text-center transition-all cursor-pointer active:scale-95 group"
-                      title={`模拟 ${person.name} 刷脸`}
-                    >
-                      <img
-                        src={person.avatarUrl}
-                        alt={person.name}
-                        className="w-12 h-12 rounded object-cover border border-[#D6CEC1] group-hover:border-[#E5A99B]"
-                      />
-                      <div className="font-gaegu text-base font-bold text-[#4A453B] truncate max-w-full">
-                        {person.name}
-                      </div>
-                      <div className="mono text-[10px] text-[#8E8675] truncate max-w-full">
-                        {person.studentId}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </main>
-
-          {/* 签到主页页脚（提供独立的 /admin 入口链接） */}
-          <footer className="py-6 px-4 text-center text-xs text-[#8E8675] bg-[#f7f7ef] flex flex-col items-center space-y-1.5">
-            <p className="font-gaegu text-base tracking-wide">今日露脸签到册 · InsightFace x 飞书妙搭</p>
-            <button
-              id="goto-admin-footer-btn"
-              onClick={() => navigateTo('/admin')}
-              className="font-gaegu text-sm text-[#8E8675]/80 hover:text-[#B25A45] underline decoration-dashed transition-colors"
-            >
-              管理后台入口 (/admin)
-            </button>
-          </footer>
-        </>
+        <NotebookHome
+          persons={persons}
+          logs={logs}
+          isProcessing={isProcessing}
+          isResultOpen={checkinResult !== null}
+          statusText={statusText}
+          hasError={hasError}
+          onCaptureFrame={handleCaptureFrame}
+          onSimulateCheckin={handleSimulateCheckin}
+          onOpenGuide={() => setIsHttpsGuideOpen(true)}
+          onOpenAdmin={() => navigateTo('/admin')}
+        />
       ) : (
         /* ---------------- 界面 2：管理后台独立界面 (/admin) ---------------- */
-        <div className="flex-1 flex flex-col bg-[#f7f7ef]">
+        <div className="admin-shell flex-1 flex flex-col">
           {!isAdminAuthenticated ? (
             /* 未认证：展示管理员登录页面，含初始用户名密码提示 */
             <main className="flex-1 flex items-center justify-center p-4">
@@ -550,9 +450,9 @@ export default function App() {
             /* 已认证：展示管理后台顶部专属操作栏与管理面板 */
             <>
               {/* 后台专属顶栏 */}
-              <header className="w-full bg-[#EEE9DF] border-b border-[#D6CEC1] px-4 py-3 sticky top-0 z-30 shadow-xs">
+              <header className="admin-topbar w-full px-4 py-4 sticky top-0 z-30">
                 <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center space-x-3">
+                  <div className="admin-header-identity flex flex-wrap items-center gap-3">
                     <button
                       id="admin-back-to-home-btn"
                       onClick={() => navigateTo('/')}
@@ -564,9 +464,9 @@ export default function App() {
 
                     <div className="h-4 w-px bg-[#D6CEC1]" />
 
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-gaegu text-xl font-bold text-[#4A453B]">
-                        系统管理控制台
+                        签到管理手帐
                       </span>
                       <span className="vintage-stamp-green text-[11px] px-2 py-0.5">
                         管理员: {adminCreds.username}
@@ -600,10 +500,11 @@ export default function App() {
               </header>
 
               {/* 后台主体 */}
-              <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 sm:p-6">
-                <AdminPanel
-                  persons={persons}
-                  onAddPerson={newPerson => setPersons(prev => [newPerson, ...prev])}
+              <main className="admin-main flex-1 w-full mx-auto px-4 py-8 sm:px-6">
+                <Suspense fallback={<div className="card p-8 text-center" role="status">正在翻开管理手帐…</div>}>
+                  <AdminPanel
+                    persons={persons}
+                    onAddPerson={newPerson => setPersons(prev => [newPerson, ...prev])}
                   onDeletePerson={id => setPersons(prev => prev.filter(p => p.id !== id))}
                   feishuConfig={feishuConfig}
                   onUpdateFeishuConfig={cfg => setFeishuConfig(cfg)}
@@ -611,10 +512,11 @@ export default function App() {
                   onClearLogs={() => setLogs([])}
                   onOpenHttpsGuide={() => setIsHttpsGuideOpen(true)}
                 />
+                </Suspense>
               </main>
 
               {/* 后台页脚 */}
-              <footer className="py-4 px-4 text-center text-xs text-[#8E8675] bg-[#EEE9DF] border-t border-[#D6CEC1]">
+              <footer className="py-5 px-4 text-center text-xs text-[#746F63] border-t border-[#D6CEC1]">
                 <p className="font-gaegu text-sm">管理后台 · InsightFace x 飞书妙搭 · 当前账号：{adminCreds.username}</p>
               </footer>
             </>
