@@ -223,19 +223,61 @@ export function checkDuplicateCheckin(
 
 /**
  * 将用户上传的本地照片或相册图片处理为 640x480 的 Base64 与 ImageData
+ * 包含文件大小校验、图片格式过滤、零拷贝 ObjectURL 内存保护与友好解码错误提示
  */
 export function processImageFile(file: File): Promise<{ base64: string; imageData: ImageData }> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = new Image();
-      img.onload = () => {
+    if (!file) {
+      reject(new Error('未选择任何文件'));
+      return;
+    }
+
+    // 1. 校验文件格式
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|bmp)$/i.test(file.name);
+    if (!isImage) {
+      reject(new Error('请选择有效的图片文件（支持 JPG、JPEG、PNG、WEBP 格式）'));
+      return;
+    }
+
+    // 2. 校验文件大小（限制 15MB 以内，防止移动端超大高分辨率照片撑爆内存）
+    const maxSizeBytes = 15 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      reject(new Error(`照片文件过大（当前 ${sizeMB}MB，上限 15MB），可能导致手机卡顿，请在相机中选择标准分辨率照片`));
+      return;
+    }
+
+    // 3. 使用 URL.createObjectURL 零拷贝技术，避免 readAsDataURL 产生数十兆的临时字符串
+    let objectUrl: string | null = null;
+    try {
+      objectUrl = URL.createObjectURL(file);
+    } catch (e) {
+      // 降级回退
+    }
+
+    const cleanup = () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+      }
+    };
+
+    const img = new Image();
+    img.onload = () => {
+      try {
         const canvas = document.createElement('canvas');
         const maxWidth = 640;
         const maxHeight = 480;
         let width = img.naturalWidth || 640;
         let height = img.naturalHeight || 480;
 
+        if (width <= 0 || height <= 0) {
+          cleanup();
+          reject(new Error('照片尺寸无效，无法完成面部特征提取'));
+          return;
+        }
+
+        // 保持比例缩放，减轻移动端渲染与网络传输负担
         if (width > maxWidth) {
           height = Math.round((height * maxWidth) / width);
           width = maxWidth;
@@ -249,18 +291,37 @@ export function processImageFile(file: File): Promise<{ base64: string; imageDat
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          reject(new Error('Canvas 上下文创建失败'));
+          cleanup();
+          reject(new Error('系统绘图上下文创建失败，请刷新页面重试'));
           return;
         }
+
         ctx.drawImage(img, 0, 0, width, height);
         const imageData = ctx.getImageData(0, 0, width, height);
         const base64 = canvas.toDataURL('image/jpeg', 0.85);
+
+        cleanup();
         resolve({ base64, imageData });
-      };
-      img.onerror = () => reject(new Error('图片解析失败'));
-      img.src = e.target?.result as string;
+      } catch (err: any) {
+        cleanup();
+        reject(new Error(`照片像素处理失败: ${err.message || '未知错误'}`));
+      }
     };
-    reader.onerror = () => reject(new Error('读取文件失败'));
-    reader.readAsDataURL(file);
+
+    img.onerror = () => {
+      cleanup();
+      reject(new Error('照片解码失败，文件可能已损坏或包含不支持的色彩编码，请更换一张正脸免冠照片'));
+    };
+
+    if (objectUrl) {
+      img.src = objectUrl;
+    } else {
+      const reader = new FileReader();
+      reader.onload = e => {
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => reject(new Error('读取本地照片文件受阻'));
+      reader.readAsDataURL(file);
+    }
   });
 }

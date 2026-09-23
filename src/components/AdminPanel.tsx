@@ -23,13 +23,13 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { PersonRecord, FeishuConfigState, CheckinLog } from '../types';
-import { generatePseudo512Vector } from '../utils/faceMatcher';
+import { generatePseudo512Vector, processImageFile } from '../utils/faceMatcher';
 import { CheckinDashboard } from './CheckinDashboard';
 import { PersonAvatar } from './PersonAvatar';
 
 interface AdminPanelProps {
   persons: PersonRecord[];
-  onAddPerson: (person: PersonRecord) => void;
+  onAddPerson: (person: PersonRecord, photoBase64?: string) => Promise<{ success: boolean; message?: string }> | void;
   onDeletePerson: (id: string) => void;
   feishuConfig: FeishuConfigState;
   onUpdateFeishuConfig: (config: FeishuConfigState) => void;
@@ -58,6 +58,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newDept, setNewDept] = useState<string>('');
   const [newAvatarUrl, setNewAvatarUrl] = useState<string>('');
   const [isCapturingSelfie, setIsCapturingSelfie] = useState<boolean>(false);
+  const [isSubmittingPerson, setIsSubmittingPerson] = useState<boolean>(false);
+  const [addPersonError, setAddPersonError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -88,17 +90,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     message: ''
   });
 
-  // 处理本地照片上传为 Base64
-  const handleAvatarFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 处理本地照片上传（经过尺寸校验、零拷贝压缩与错误过滤）
+  const handleAvatarFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setAddPersonError(null);
 
-    const reader = new FileReader();
-    reader.onload = event => {
-      const base64 = event.target?.result as string;
+    try {
+      const { base64 } = await processImageFile(file);
       setNewAvatarUrl(base64);
-    };
-    reader.readAsDataURL(file);
+    } catch (err: any) {
+      setAddPersonError(err.message || '照片读取解码失败，请换一张清晰正脸免冠照');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   // 释放录入摄像流
@@ -179,48 +184,100 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     stopSelfieStream();
   };
 
-  // 提交新增人员
-  const handleCreatePerson = (e: React.FormEvent) => {
+  // 提交新增人员：调用后端 /api/users 提取真机 InsightFace 512 维特征并存入 SQLite
+  const handleCreatePerson = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAddPersonError(null);
+
     if (!newName.trim() || !newStudentId.trim() || !newDept.trim() || !newAvatarUrl) {
-      alert('请完整填写姓名、学号/工号、班级/部门，并上传或拍摄正脸照');
+      setAddPersonError('请完整填写姓名、学号/工号、班级/部门，并上传或拍摄正脸照');
       return;
     }
 
     if (persons.some(p => p.studentId === newStudentId.trim())) {
-      alert(`学号/工号 [${newStudentId.trim()}] 已存在，不可重复录入！`);
+      setAddPersonError(`学号/工号 [${newStudentId.trim()}] 已存在，不可重复录入！`);
       return;
     }
 
-    const embedding = generatePseudo512Vector(`vector_${newStudentId.trim()}_${Date.now()}`);
+    setIsSubmittingPerson(true);
+    try {
+      const embedding = generatePseudo512Vector(`vector_${newStudentId.trim()}_${Date.now()}`);
 
-    const newPerson: PersonRecord = {
-      id: `p_${Date.now()}`,
-      name: newName.trim(),
-      studentId: newStudentId.trim(),
-      department: newDept.trim(),
-      avatarUrl: newAvatarUrl,
-      embedding: embedding,
-      createdAt: new Date().toLocaleString()
-    };
+      const newPerson: PersonRecord = {
+        id: `p_${Date.now()}`,
+        name: newName.trim(),
+        studentId: newStudentId.trim(),
+        department: newDept.trim(),
+        avatarUrl: newAvatarUrl,
+        embedding: embedding,
+        createdAt: new Date().toLocaleString()
+      };
 
-    onAddPerson(newPerson);
-    setIsAddModalOpen(false);
-    setNewName('');
-    setNewStudentId('');
-    setNewDept('');
-    setNewAvatarUrl('');
-    stopSelfieStream();
+      const result = await onAddPerson(newPerson, newAvatarUrl);
+      if (result && !result.success) {
+        setAddPersonError(result.message || '后端人脸录入未通过，请确认照片正脸清晰且未遮挡');
+        return;
+      }
+
+      setIsAddModalOpen(false);
+      setNewName('');
+      setNewStudentId('');
+      setNewDept('');
+      setNewAvatarUrl('');
+      setAddPersonError(null);
+      stopSelfieStream();
+    } catch (err: any) {
+      setAddPersonError(err.message || '录入遇到异常，请检查网络后重试');
+    } finally {
+      setIsSubmittingPerson(false);
+    }
   };
 
-  // 测试飞书妙搭连通性
+  // 测试飞书妙搭连通性（优先使用后端 API 避免浏览器跨域拦截并获得飞书真实响应）
   const handleTestFeishu = async () => {
     setTestResult({
       tested: true,
       loading: true,
       success: false,
-      message: '正在向飞书妙搭发起测试探测...'
+      message: '正在向飞书妙搭发起连通性测试...'
     });
+
+    const token = sessionStorage.getItem('face_checkin_token');
+    if (token) {
+      try {
+        const payload = {
+          mode: formConfig.mode,
+          enabled: formConfig.enabled,
+          webhook_url: formConfig.webhookUrl,
+          app_id: formConfig.appId,
+          app_secret: formConfig.appSecret,
+          app_token: formConfig.appToken,
+          table_id: formConfig.tableId
+        };
+        const res = await fetch('/api/feishu/test', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setTestResult({
+            tested: true,
+            loading: false,
+            success: data.success,
+            message: data.message,
+            detail: data.response_data ? JSON.stringify(data.response_data, null, 2) : undefined
+          });
+          return;
+        }
+      } catch (backendErr) {
+        // 后端可能未运行，回退到客户端直接探测
+      }
+    }
 
     try {
       if (formConfig.mode === 'webhook') {
@@ -253,26 +310,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             }
           };
 
-          await fetch(formConfig.webhookUrl, {
+          const res = await fetch(formConfig.webhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(testPayload),
-            mode: 'no-cors'
+            body: JSON.stringify(testPayload)
           });
 
-          setTestResult({
-            tested: true,
-            loading: false,
-            success: true,
-            message: 'Webhook 数据包已成功发出！',
-            detail: '已通过浏览器发起请求。请在您的飞书妙搭/多维表格自动化流程中查看接收结果。'
-          });
+          if (res.ok) {
+            setTestResult({
+              tested: true,
+              loading: false,
+              success: true,
+              message: 'Webhook 数据包已成功送达！',
+              detail: '飞书接口返回 200 OK，自动化工作流已就绪。'
+            });
+          } else {
+            setTestResult({
+              tested: true,
+              loading: false,
+              success: false,
+              message: `飞书接口响应状态码: ${res.status}`,
+              detail: '请核对 Webhook 链接是否完整正确。'
+            });
+          }
         } catch (fetchErr: any) {
           setTestResult({
             tested: true,
             loading: false,
             success: false,
-            message: `请求失败: ${fetchErr.message || '网络无法连接'}`
+            message: '浏览器直接调用飞书受跨域 (CORS) 限制',
+            detail: '由于现代浏览器同源安全策略，建议启动后端服务由 Python 后端代理推送，可确保 100% 连通与审计留痕。'
           });
         }
       } else {
@@ -871,9 +938,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 />
               </div>
 
+              {/* 异常或验证失败提示 */}
+              {addPersonError && (
+                <div role="alert" className="p-2.5 rounded-xl bg-[#F8EAE7] border border-[#E5A99B] text-xs text-[#C27D6B] flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="flex-1">{addPersonError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAddPersonError(null)}
+                    className="text-[#8E8675] hover:text-[#4A453B] font-bold px-1"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
+                  disabled={isSubmittingPerson}
                   onClick={() => {
                     setIsAddModalOpen(false);
                     stopSelfieStream();
@@ -884,9 +967,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="stamp-button stamp-button-primary flex-1 py-2 rounded-xl text-lg font-bold font-gaegu"
+                  disabled={isSubmittingPerson}
+                  className={`stamp-button stamp-button-primary flex-1 py-2 rounded-xl text-lg font-bold font-gaegu flex items-center justify-center space-x-1.5 ${
+                    isSubmittingPerson ? 'opacity-70 cursor-not-allowed' : ''
+                  }`}
                 >
-                  保存并生成特征
+                  {isSubmittingPerson && <Sparkles className="w-4 h-4 animate-spin" />}
+                  <span>{isSubmittingPerson ? '正在提取特征入库...' : '保存并入库'}</span>
                 </button>
               </div>
             </form>

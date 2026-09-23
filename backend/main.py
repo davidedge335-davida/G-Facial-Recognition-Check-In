@@ -7,6 +7,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from .config import settings
 from .models import (
@@ -22,6 +23,25 @@ from .database import (
 )
 from .face_engine import face_engine
 from .feishu_service import feishu_service
+
+security = HTTPBearer(auto_error=False)
+ADMIN_TOKEN_VALUE = "admin-logged-in-token-2026"
+
+async def verify_admin(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """验证管理员 Bearer Token，保护后台敏感接口"""
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="缺少管理员 Token，请先登录后台",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if credentials.credentials != ADMIN_TOKEN_VALUE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="管理员凭证无效或已过期，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return True
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -165,10 +185,10 @@ async def checkin(request: CheckinRequest):
     )
 
 # ----------------- 管理后台：人员底库管理 -----------------
-@app.post("/api/users", response_model=UserResponse)
+@app.post("/api/users", response_model=UserResponse, dependencies=[Depends(verify_admin)])
 async def create_user(user_in: UserCreate):
     """
-    录入人员底库信息
+    录入人员底库信息（需管理员鉴权）
     1. 校验学号/工号唯一性
     2. 检测人脸并提取 512 维特征向量（若未识别人脸直接拒绝并提示）
     3. 保存原图留档，存入 SQLite 并重载内存向量矩阵
@@ -241,9 +261,9 @@ async def list_users():
         ))
     return res
 
-@app.delete("/api/users/{user_id}")
+@app.delete("/api/users/{user_id}", dependencies=[Depends(verify_admin)])
 async def remove_user(user_id: int):
-    """删除人员信息（连同特征向量与头像）"""
+    """删除人员信息（连同特征向量与头像，需管理员鉴权）"""
     ok = delete_user(user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="未找到该人员")
@@ -251,21 +271,21 @@ async def remove_user(user_id: int):
     return {"success": True, "message": "人员已成功删除"}
 
 # ----------------- 管理后台：飞书妙搭配置与连通性测试 -----------------
-@app.get("/api/config/feishu", response_model=FeishuConfig)
+@app.get("/api/config/feishu", response_model=FeishuConfig, dependencies=[Depends(verify_admin)])
 async def get_feishu_configuration():
-    """读取当前飞书配置"""
+    """读取当前飞书配置（需管理员鉴权）"""
     cfg = get_feishu_config()
     return FeishuConfig(**cfg)
 
-@app.post("/api/config/feishu")
+@app.post("/api/config/feishu", dependencies=[Depends(verify_admin)])
 async def update_feishu_configuration(config: FeishuConfig):
-    """更新保存飞书配置"""
+    """更新保存飞书配置（需管理员鉴权）"""
     save_feishu_config(config.model_dump())
     return {"success": True, "message": "飞书配置已成功保存！"}
 
-@app.post("/api/feishu/test", response_model=FeishuTestResponse)
+@app.post("/api/feishu/test", response_model=FeishuTestResponse, dependencies=[Depends(verify_admin)])
 async def test_feishu_integration(custom_cfg: Optional[FeishuConfig] = None):
-    """测试飞书妙搭 Webhook 或多维表格 API 连通性"""
+    """测试飞书妙搭 Webhook 或多维表格 API 连通性（需管理员鉴权）"""
     cfg_dict = custom_cfg.model_dump() if custom_cfg else None
     success, message, data = await feishu_service.test_connection(cfg_dict)
     return FeishuTestResponse(
@@ -275,9 +295,9 @@ async def test_feishu_integration(custom_cfg: Optional[FeishuConfig] = None):
     )
 
 # ----------------- 管理后台：流水审计与统计 -----------------
-@app.get("/api/logs", response_model=List[AttendanceLog])
+@app.get("/api/logs", response_model=List[AttendanceLog], dependencies=[Depends(verify_admin)])
 async def get_logs(limit: int = 50):
-    """查询最近的签到流水日志"""
+    """查询最近的签到流水日志（需管理员鉴权）"""
     logs = get_recent_attendance_logs(limit=limit)
     return [AttendanceLog(**log) for log in logs]
 

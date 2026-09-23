@@ -40,3 +40,13 @@ export interface CheckinResultState {
   feishuSynced?: boolean;
   feishuMsg?: string;
 }
+
+export interface FastPassFeedback {
+  id: string;
+  type: 'success' | 'repeated' | 'not_found' | 'error';
+  message: string;
+  user?: PersonRecord;
+  similarity?: number;
+  time: string;
+  feishuSynced?: boolean;
+}
