@@ -1,0 +1,6 @@
+{
+  "name": "人脸识别签到系统",
+  "description": "移动端人脸识别签到系统，支持 InsightFace 512 维特征比对、飞书妙搭同步与后台 Recharts 考勤数据看板",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

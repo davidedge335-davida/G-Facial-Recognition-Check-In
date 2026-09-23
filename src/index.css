@@ -1,0 +1,188 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f7f7ef;
+  --paper: #f0ece3;
+  --paper-card: #fcfbf7;
+  --ink: #5C5648;
+  --ink-dark: #4A453B;
+  --ink-muted: #8E8675;
+  --ink-light: #B5ACA0;
+  --accent: #E5A99B;
+  --accent-hover: #DB9889;
+  --accent-soft: rgba(229, 169, 155, 0.15);
+  --accent-border: rgba(229, 169, 155, 0.85);
+  --border-paper: #E3DCD1;
+  --border-dark: #D6CEC1;
+  --shadow-paper: 4px 4px 0px rgba(92, 86, 72, 0.15);
+  --shadow-paper-lg: 6px 6px 0px rgba(92, 86, 72, 0.18);
+  --shadow-paper-sm: 2px 2px 0px rgba(92, 86, 72, 0.12);
+}
+
+body {
+  background-color: #f7f7ef;
+  font-family: 'Inter', 'Noto Sans SC', sans-serif;
+  color: var(--ink);
+  margin: 0;
+  min-height: 100vh;
+}
+
+h1, h2, h3, .font-gaegu {
+  font-family: 'Gaegu', 'Noto Sans SC', cursive, sans-serif;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* Scrapbook Paper Card */
+.card, .paper-card {
+  background: var(--paper-card);
+  border: 2px solid var(--border-paper);
+  box-shadow: var(--shadow-paper);
+  border-radius: 20px;
+}
+
+.paper-card-sm {
+  background: var(--paper-card);
+  border: 1.5px solid var(--border-paper);
+  box-shadow: var(--shadow-paper-sm);
+  border-radius: 14px;
+}
+
+.paper-inner {
+  background: #EEE8DE;
+  border: 2px solid var(--border-dark);
+  border-radius: 15px;
+}
+
+/* Stamp Button from Variation 7 */
+.stamp-button {
+  border: 2px dashed var(--accent);
+  background: rgba(229, 169, 155, 0.12);
+  color: var(--ink-dark);
+  font-family: 'Gaegu', cursive, sans-serif;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 2px 2px 0px rgba(229, 169, 155, 0.2);
+}
+
+.stamp-button:hover:not(:disabled) {
+  background: rgba(229, 169, 155, 0.22);
+  border-color: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 3px 3px 0px rgba(229, 169, 155, 0.3);
+}
+
+.stamp-button:active:not(:disabled) {
+  transform: rotate(-1.5deg) translateY(1px);
+  box-shadow: 1px 1px 0px rgba(229, 169, 155, 0.2);
+}
+
+.stamp-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(30%);
+}
+
+.stamp-button-primary {
+  border: 2px dashed #D97E69;
+  background: #E5A99B;
+  color: #382A25;
+  font-family: 'Gaegu', cursive, sans-serif;
+  box-shadow: 3px 3px 0px rgba(92, 86, 72, 0.2);
+  transition: all 0.15s ease;
+}
+
+.stamp-button-primary:hover:not(:disabled) {
+  background: #E09C8D;
+  transform: translateY(-1px);
+  box-shadow: 4px 4px 0px rgba(92, 86, 72, 0.25);
+}
+
+.stamp-button-primary:active:not(:disabled) {
+  transform: rotate(-1.5deg) translateY(1px);
+  box-shadow: 1px 1px 0px rgba(92, 86, 72, 0.15);
+}
+
+/* Paper Clip Decal (Subtle Vintage Stationery) */
+.paper-clip {
+  position: absolute;
+  width: 14px;
+  height: 30px;
+  background: transparent;
+  border: 1.5px solid #A89E90;
+  border-radius: 7px;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-2deg);
+  z-index: 25;
+  box-shadow: 0.5px 1px 1.5px rgba(92, 86, 72, 0.15);
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.paper-clip::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 2px;
+  right: 2px;
+  bottom: 4px;
+  border: 1.3px solid #C4BAAB;
+  border-top: none;
+  border-radius: 0 0 5px 5px;
+}
+
+/* Washi Tape Decal */
+.washi-tape {
+  position: absolute;
+  height: 22px;
+  background: rgba(229, 169, 155, 0.45);
+  border-left: 2px dashed rgba(92, 86, 72, 0.25);
+  border-right: 2px dashed rgba(92, 86, 72, 0.25);
+  pointer-events: none;
+  z-index: 25;
+}
+
+/* Vintage Ink Stamp Badge */
+.vintage-stamp {
+  border: 2px dashed var(--accent);
+  color: #B25A45;
+  font-family: 'Gaegu', cursive, sans-serif;
+  padding: 2px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transform: rotate(-2deg);
+  background: rgba(229, 169, 155, 0.1);
+}
+
+.vintage-stamp-green {
+  border: 2px dashed #7EA885;
+  color: #4C7253;
+  font-family: 'Gaegu', cursive, sans-serif;
+  padding: 2px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transform: rotate(1.5deg);
+  background: rgba(126, 168, 133, 0.15);
+}
+
+/* Polaroid Photo Card */
+.polaroid-card {
+  background: #FFFFFF;
+  padding: 8px 8px 18px 8px;
+  border: 1px solid #E0D9CD;
+  box-shadow: 2px 3px 6px rgba(92, 86, 72, 0.12);
+  transition: all 0.2s ease;
+}
+
+.polaroid-card:hover {
+  transform: translateY(-2px) rotate(0.5deg);
+  box-shadow: 3px 5px 10px rgba(92, 86, 72, 0.18);
+}

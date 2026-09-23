@@ -1,0 +1,20 @@
+# 核心 Web 与异步框架
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+python-multipart>=0.0.9
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+
+# 人脸识别底座 (InsightFace + ONNX Runtime)
+insightface>=0.7.3
+onnxruntime>=1.17.0
+opencv-python-headless>=4.9.0.80
+numpy>=1.24.0,<2.0.0
+pillow>=10.2.0
+
+# 网络请求客户端 (用于对接飞书 Webhook 及开放平台 API)
+httpx>=0.27.0
+
+# 加密与安全认证 (管理员 JWT)
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
