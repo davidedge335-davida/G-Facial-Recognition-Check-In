@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  face-attendance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: face-attendance:latest
+    container_name: face-attendance-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=admin123
+      - INSIGHTFACE_MODEL_NAME=buffalo_s
+      - SIMILARITY_THRESHOLD=0.60
+      - REPEAT_CHECKIN_COOLDOWN_SECONDS=300
+    volumes:
+      # 持久化挂载 SQLite 数据库及人员头像目录
+      - ./data:/app/backend/data

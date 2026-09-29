@@ -28,7 +28,10 @@ class FaceEngine:
         # 内存向量底库缓存
         self.cached_user_list: List[Dict[str, Any]] = []
         self.cached_embedding_matrix: Optional[np.ndarray] = None
-        self.reload_cache()
+        # 注意：此处切勿在 __init__ 中同步调用 reload_cache()！
+        # 因为全局单例 face_engine 在模块导入期 (import time) 就会被实例化，
+        # 而在全新部署首次启动时，数据库建表 init_db() 是在 FastAPI lifespan 启动阶段才执行。
+        # 因此统一交由 lifespan 在 init_db() 之后安全触发 reload_cache()，防止启动前查询 users 表抛错。
 
     def _init_model(self):
         """初始化 InsightFace FaceAnalysis 实例"""
@@ -54,12 +57,21 @@ class FaceEngine:
         从 SQLite 加载所有用户 512 维特征向量至内存矩阵
         底库人员增删后调用此方法，毫秒级更新
         """
-        users_with_embeddings = get_all_user_embeddings()
+        try:
+            users_with_embeddings = get_all_user_embeddings()
+        except Exception as e:
+            print(f"⚠️ 读取底库特征向量异常: {e}")
+            self.cached_user_list = []
+            self.cached_embedding_matrix = None
+            return
+
         self.cached_user_list = []
         vectors = []
 
         for item in users_with_embeddings:
-            emb = item["embedding"]
+            emb = item.get("embedding")
+            if emb is None:
+                continue
             # 确保 L2 归一化
             norm = np.linalg.norm(emb)
             if norm > 1e-6:

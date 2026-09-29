@@ -8,7 +8,6 @@ import {
   ShieldCheck,
   Sparkles,
   UserCheck,
-  Upload,
   Zap,
   Volume2,
   VolumeX,
@@ -18,10 +17,13 @@ import {
   AlertCircle,
   Clock,
   Sun,
-  Pause
+  Pause,
+  Wrench,
+  HelpCircle
 } from 'lucide-react';
-import { captureAndCompressFrame, checkFacePresence, processImageFile } from '../utils/faceMatcher';
+import { captureAndCompressFrame, checkFacePresence } from '../utils/faceMatcher';
 import { FastPassFeedback, CheckinLog } from '../types';
+import { CameraTroubleshootModal } from './CameraTroubleshootModal';
 
 interface CameraViewProps {
   onCaptureFrame: (frameBase64: string, imageData: ImageData) => void;
@@ -60,7 +62,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const isMountedRef = useRef<boolean>(true);
   const requestIdRef = useRef<number>(0);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cooldownUntilRef = useRef<number>(0);
 
   // 默认使用后置环境摄像头（更符合管理员持手持设备对准排队人群连续核销的真实场景），支持持久化与一键翻转
@@ -74,7 +75,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
   const [cameraState, setCameraState] = useState<'requesting' | 'active' | 'denied' | 'unsupported'>('requesting');
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isTroubleshootOpen, setIsTroubleshootOpen] = useState<boolean>(false);
   const [isFlashActive, setIsFlashActive] = useState<boolean>(false);
   const [isAutoDetect, setIsAutoDetect] = useState<boolean>(true);
   const autoDetectTimerRef = useRef<number | null>(null);
@@ -141,9 +142,9 @@ export const CameraView: React.FC<CameraViewProps> = ({
         window.location.protocol !== 'https:' &&
         window.location.hostname !== 'localhost'
       ) {
-        setErrorMessage('当前页面未在安全上下文 (HTTPS) 中运行，浏览器禁用了摄像头权限。请使用 HTTPS 访问，或通过下方按钮上传自拍照打卡。');
+        setErrorMessage('当前页面未在安全上下文 (HTTPS) 中运行，手机浏览器已强制拦截摄像头。考勤要求现场真人核销，请使用 HTTPS 网址打开，或点击下方【一键排查问题】。');
       } else {
-        setErrorMessage('当前浏览器环境不支持直接调起摄像头。您仍可通过下方按钮选择自拍照打卡。');
+        setErrorMessage('当前浏览器环境不支持直接调起摄像头。考勤要求现场真人出镜核销（已禁用相册上传），请点击下方【一键排查问题】按指引开启。');
       }
       return;
     }
@@ -256,37 +257,18 @@ export const CameraView: React.FC<CameraViewProps> = ({
       const errName = String(err.name || '');
 
       if (err.message === 'CAMERA_TIMEOUT') {
-        setErrorMessage('调用摄像头超时，可能权限提示未弹出或被拦截，请尝试点击“重试”或直接上传照片打卡。');
+        setErrorMessage('调用手机摄像头响应超时，授权弹窗可能被拦截。请点击【重新调起摄像头】重试，或点击【一键排查问题】。');
       } else if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        setErrorMessage('摄像头权限被拒绝，请在手机浏览器设置中允许本站访问摄像头，或使用下方按钮上传照片打卡。');
+        setErrorMessage('摄像头权限已被拒绝。考勤要求现场真人出镜，请在手机浏览器或系统设置中允许本站访问摄像头，或点击下方【一键排查问题】查看指引。');
       } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-        setErrorMessage('未检测到可用的摄像头硬件设备，您可使用相册自拍照打卡。');
+        setErrorMessage('未检测到可用的摄像头硬件设备。请确认手机相机功能正常且未被硬件级禁用。');
       } else if (errName === 'NotReadableError' || errName === 'TrackStartError' || errMsg.includes('in use')) {
-        setErrorMessage('摄像头已被其他软件或网页占用 (Device in use)。可尝试关闭占用软件或点击“释放并重连”。');
+        setErrorMessage('摄像头已被其他软件或网页占用 (Device in use)。请关闭后台占用应用后点击【重新调起摄像头】。');
       } else {
-        setErrorMessage(`摄像头启动受阻: ${err.message || '请确认摄像头未被占用'}`);
+        setErrorMessage(`摄像头启动受阻: ${err.message || '请确认摄像头未被占用并拥有权限'}`);
       }
     }
   }, [facingMode, stopCurrentStream]);
-
-  // 本地照片上传打卡降级方案（结合文件大小限制、零拷贝内存保护与解码异常友好提示）
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadError(null);
-
-    try {
-      const result = await processImageFile(file);
-      setIsFlashActive(true);
-      setTimeout(() => setIsFlashActive(false), 200);
-      onCaptureFrame(result.base64, result.imageData);
-    } catch (err: any) {
-      console.warn('本地照片打卡处理异常:', err);
-      setUploadError(err.message || '照片读取解码失败，请换一张清晰正脸照片');
-    } finally {
-      e.target.value = '';
-    }
-  };
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -558,6 +540,18 @@ export const CameraView: React.FC<CameraViewProps> = ({
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
+          {/* 一键排查诊断 */}
+          <button
+            id="open-troubleshoot-btn"
+            type="button"
+            onClick={() => setIsTroubleshootOpen(true)}
+            className="stamp-button px-2 py-1 rounded-lg border border-[#D6CEC1] bg-[#F3EFE6] hover:bg-[#EAE3D6] text-[#5C5648] flex items-center space-x-1 text-xs whitespace-nowrap cursor-pointer"
+            title="一键排查摄像头权限与运行环境"
+          >
+            <Wrench className="w-3.5 h-3.5 text-[#B25A45]" />
+            <span className="font-gaegu text-sm">一键排查</span>
+          </button>
+
           {/* 切换前后置镜头 */}
           <button
             id="toggle-facing-camera-btn"
@@ -566,7 +560,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
             className="stamp-button px-2 py-1 rounded-lg border border-[#D6CEC1] bg-[#F3EFE6] hover:bg-[#EAE3D6] text-[#5C5648] flex items-center space-x-1 text-xs whitespace-nowrap cursor-pointer"
             title="切换前后置镜头"
           >
-            <FlipHorizontal className="w-3.5 h-3.5 text-[#B25A45]" />
+            <FlipHorizontal className="w-3.5 h-3.5 text-[#4C7253]" />
             <span className="font-gaegu text-sm">翻转镜头</span>
           </button>
         </div>
@@ -756,60 +750,58 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
         {/* 摄像头受阻 / 未就绪状态视图 */}
         {cameraState !== 'active' && (
-          <div className="absolute inset-0 bg-[#EEE8DE] flex flex-col items-center justify-center p-6 text-center z-30 space-y-3 font-gaegu">
+          <div className="absolute inset-0 bg-[#EEE8DE] flex flex-col items-center justify-center p-5 text-center z-30 space-y-2.5 font-gaegu">
             {cameraState === 'requesting' ? (
               <>
                 <RefreshCw className="w-9 h-9 text-[#B25A45] animate-spin" />
                 <p className="text-lg text-[#5C5648]">正在调起手机摄像头...</p>
-                <p className="text-xs font-sans text-[#8E8675]">若弹出权限提示，请点击“允许”</p>
+                <p className="text-xs font-sans text-[#8E8675]">若弹出权限提示，请务必点击“允许”</p>
               </>
             ) : (
               <>
-                <div style={{ color: '#A59E92' }} className="flex flex-col items-center justify-center space-y-2">
+                <div style={{ color: '#A59E92' }} className="flex flex-col items-center justify-center space-y-1.5">
                   {cameraState === 'unsupported' ? (
-                    <CameraOff className="w-11 h-11 text-[#C27D6B]/80" />
+                    <CameraOff className="w-10 h-10 text-[#C27D6B]/80" />
                   ) : (
-                    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                       <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                       <circle cx="12" cy="13" r="4" />
                     </svg>
                   )}
-                  <p className="text-base text-[#8E8675]">
-                    {cameraState === 'unsupported' ? '浏览器未支持直接调起摄像头' : '摄像头暂未连接'}
+                  <p className="text-base text-[#8E8675] font-bold">
+                    {cameraState === 'unsupported' ? '浏览器未支持直接调起摄像头' : '手机摄像头暂未连接'}
                   </p>
+                  <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-sans bg-[#FFFDF7] text-[#3B5D41] border border-[#7EA885]/50 shadow-2xs font-bold">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#4C7253]" />
+                    <span>现场真人出镜核验 · 已关闭相册图片通道</span>
+                  </span>
                 </div>
+
                 <p className="text-xs font-sans text-[#7D7667] max-w-xs leading-relaxed px-2">
                   {errorMessage}
                 </p>
 
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1 font-sans">
-                  {cameraState !== 'unsupported' && (
-                    <button
-                      id="retry-camera-btn"
-                      onClick={startCamera}
-                      className="stamp-button px-3.5 py-1.5 rounded-lg text-xs font-medium text-[#4A453B] flex items-center space-x-1.5"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>重新连接</span>
-                    </button>
-                  )}
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1 font-sans w-full max-w-xs">
+                  <button
+                    id="retry-camera-btn"
+                    type="button"
+                    onClick={startCamera}
+                    className="stamp-button stamp-button-primary w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-[#382A25] flex items-center justify-center space-x-1.5 shadow-xs cursor-pointer"
+                    title="再次请求系统摄像头权限并启动画面"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>重新调起摄像头</span>
+                  </button>
 
                   <button
-                    id="upload-fallback-btn"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="stamp-button stamp-button-primary px-3.5 py-1.5 rounded-lg text-xs font-bold text-[#382A25] flex items-center space-x-1.5 shadow-xs"
-                    title="选择本地自拍照进行人脸比对打卡"
+                    id="troubleshoot-camera-btn"
+                    type="button"
+                    onClick={() => setIsTroubleshootOpen(true)}
+                    className="stamp-button w-full sm:w-auto px-3.5 py-2 rounded-xl text-xs font-medium text-[#4A453B] flex items-center justify-center space-x-1.5 cursor-pointer bg-white"
+                    title="一键排查摄像头权限、环境与硬件问题"
                   >
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>上传照片打卡</span>
+                    <Wrench className="w-3.5 h-3.5 text-[#B25A45]" />
+                    <span>一键排查问题</span>
                   </button>
                 </div>
               </>
@@ -817,21 +809,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
           </div>
         )}
       </div>
-
-      {/* 本地照片解析错误提示条 */}
-      {uploadError && (
-        <div role="alert" className="mt-2.5 p-2 rounded-xl bg-[#F8EAE7] border border-[#E5A99B] text-xs text-[#C27D6B] flex items-start space-x-2">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span className="flex-1">{uploadError}</span>
-          <button
-            type="button"
-            onClick={() => setUploadError(null)}
-            className="text-[#8E8675] hover:text-[#4A453B] font-bold px-1"
-          >
-            ×
-          </button>
-        </div>
-      )}
 
       {/* 实时状态提示条（手账便签风格） */}
       <div className="mt-3 px-3 py-1.5 rounded-xl bg-[#F5F0E6] border border-[#E3DCD1] flex items-center justify-between text-xs">
@@ -904,6 +881,14 @@ export const CameraView: React.FC<CameraViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* 摄像头一键排查与权限诊断弹窗 */}
+      <CameraTroubleshootModal
+        isOpen={isTroubleshootOpen}
+        onClose={() => setIsTroubleshootOpen(false)}
+        onRetryCamera={startCamera}
+        currentError={errorMessage}
+      />
     </div>
   );
 };

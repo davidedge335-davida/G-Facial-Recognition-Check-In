@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { getApiUrl } from '../utils/api';
 
 interface PersonAvatarProps {
   name: string;
@@ -11,11 +12,13 @@ export function PersonAvatar({ name, src, className = '' }: PersonAvatarProps) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
 
-  return failed || !src ? (
+  const resolvedSrc = getApiUrl(src);
+
+  return failed || !resolvedSrc ? (
     <span className={`avatar-placeholder ${className}`} role="img" aria-label={name}>
       {Array.from(name)[0] || '人'}
     </span>
   ) : (
-    <img src={src} alt={name} className={className} onError={() => setFailed(true)} />
+    <img src={resolvedSrc} alt={name} className={className} onError={() => setFailed(true)} />
   );
 }

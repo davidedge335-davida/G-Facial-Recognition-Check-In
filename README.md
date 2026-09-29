@@ -50,21 +50,57 @@
 
 ## 启动与运行指南
 
-### 1. 运行 Web 移动端界面（已在容器端口 3000 启动）
+### 1. 本地开发调试（前后端双进程）
 ```bash
+# 启动前端开发服务器 (端口 3000)
 npm run dev
-```
-直接在浏览器访问即可体验移动端刷脸打卡与管理后台。
 
-### 2. 启动 Python FastAPI 后端服务
-```bash
-# 1. 安装 Python 依赖
+# 启动 Python FastAPI 后端服务 (端口 8000)
 pip install -r requirements.txt
-
-# 2. 启动 FastAPI 后台
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-后端接口文档查看：`http://localhost:8000/docs`。
+- 前端访问：`http://localhost:3000`（Vite 代理自动将 `/api` 与 `/avatars` 转发至 8000）
+- 后端 Swagger 文档：`http://localhost:8000/docs`
+
+---
+
+## 生产环境部署方案（已闭环解决生产连通与初始化依赖问题）
+
+### 方案 A：Docker / 容器化一键部署（推荐）
+项目提供了多阶段构建的 `Dockerfile` 与 `docker-compose.yml`：
+```bash
+# 方式 1：使用 docker-compose 一键启动
+docker compose up -d --build
+
+# 方式 2：使用原生 Docker 构建并运行
+docker build -t face-attendance .
+docker run -d -p 8000:8000 -v $(pwd)/data:/app/backend/data --name face-app face-attendance
+```
+容器内完成前端静态构建并由 FastAPI 一并托管前端 SPA 与 API 服务，单一端口（8000）即可完整运行。
+
+### 方案 B：统一生产脚本启动
+```bash
+# 构建前端并以生产模式启动 FastAPI
+chmod +x scripts/start_production.sh
+./scripts/start_production.sh
+```
+
+### 方案 C：Nginx 反向代理拓扑
+若采用独立 Web 服务器管理静态资源，参考根目录下的 `nginx.conf`：
+- 前端静态文件托管在 `/var/www/html/dist`，配置 `try_files $uri $uri/ /index.html`；
+- `/api/` 与 `/avatars/` 统一反向代理至后端 `127.0.0.1:8000`。
+
+### 方案 D：前后端分域/跨域独立部署
+若前端部署于 Vercel / Netlify 等云平台，后端部署于独立 VPS：
+- 构建前端时配置环境变量：`VITE_API_BASE_URL="https://your-backend-domain.com"`；
+- 前端网络请求层已通过 `src/utils/api.ts` 统一管理，会自动拼接该 Base URL。
+
+---
+
+## 启动生命周期与健壮性设计
+1. **模块导入解耦**：全局人脸单例 `FaceEngine` 实例化时不查询数据库，避免在全新环境下建表前查询 SQLite 抛出 `no such table: users`。
+2. **生命周期保序**：由 FastAPI `lifespan` 严格按顺序执行：先执行 `init_db()` 完成建表与默认配置写入，再执行 `face_engine.reload_cache()` 加载内存向量底库。
+3. **容错兜底**：`database.py` 中底层查询若遇到尚未初始化的 SQLite 表，自动捕获 `sqlite3.OperationalError` 并返回空列表，避免进程崩溃。
 
 ---
 
