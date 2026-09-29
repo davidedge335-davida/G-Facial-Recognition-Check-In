@@ -40,27 +40,16 @@ class CheckinResponse(BaseModel):
     feishu_message: Optional[str] = None
 
 # ----------------- 飞书妙搭配置模型 -----------------
-class FeishuConfigBase(BaseModel):
+class FeishuConfig(BaseModel):
     mode: Literal["webhook", "bitable"] = Field("webhook", description="集成模式：webhook（推荐轻量）或 bitable（多维表格API）")
     enabled: bool = Field(True, description="是否启用飞书自动同步")
     # 方案 A: 飞书妙搭 Webhook
     webhook_url: Optional[str] = Field(None, description="飞书妙搭/工作流的 Webhook 触发器 URL")
     # 方案 B: 飞书开放平台多维表格 API
     app_id: Optional[str] = Field(None, description="飞书自建应用 App ID (cli_xxx)")
+    app_secret: Optional[str] = Field(None, description="飞书自建应用 App Secret")
     app_token: Optional[str] = Field(None, description="多维表格 App Token (bascnxxx)")
     table_id: Optional[str] = Field(None, description="多维表格数据表 Table ID (tblxxx)")
-
-class FeishuConfigUpdate(FeishuConfigBase):
-    """保存或更新飞书配置请求（只写型敏感字段 app_secret，留空或脱敏符号表示保留现有密钥）"""
-    app_secret: Optional[str] = Field(None, description="飞书自建应用 App Secret（留空表示保持服务端现有密钥不变）")
-
-class FeishuConfigResponse(FeishuConfigBase):
-    """读取飞书配置响应（严格排除明文 app_secret，仅返回脱敏掩码与存在状态）"""
-    has_app_secret: bool = Field(False, description="服务器端是否已安全保存 App Secret")
-    app_secret_masked: Optional[str] = Field(None, description="脱敏后的密钥显示标识，例如 ************")
-
-# 向下兼容历史引用
-FeishuConfig = FeishuConfigUpdate
 
 class FeishuTestResponse(BaseModel):
     success: bool
@@ -79,27 +68,6 @@ class AttendanceLog(BaseModel):
     checkin_time: str
     feishu_status: str
     error_msg: Optional[str] = None
-    retry_count: int = 0
-    feishu_record_id: Optional[str] = None
-
-class SyncRetryResponse(BaseModel):
-    success: bool
-    message: str
-    record_id: Optional[str] = None
-
-class BatchSyncRetryResponse(BaseModel):
-    total: int
-    succeeded: int
-    failed: int
-    details: List[dict] = []
-    message: str
-
-class SyncStatsResponse(BaseModel):
-    total: int
-    success: int
-    failed: int
-    repeated: int
-    pending: int
 
 # ----------------- 管理员认证模型 -----------------
 class AdminLogin(BaseModel):
@@ -109,14 +77,3 @@ class AdminLogin(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    expires_in: int = Field(default=86400, description="Token 有效秒数")
-
-class ChangePasswordRequest(BaseModel):
-    old_password: str = Field(..., description="原密码")
-    new_password: str = Field(..., min_length=4, description="新密码（至少4位）")
-
-class AdminUserResponse(BaseModel):
-    username: str
-    authenticated: bool = True
-    expires_at: Optional[int] = None
-    is_default_password: bool = False

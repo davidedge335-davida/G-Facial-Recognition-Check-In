@@ -1,9 +1,8 @@
 import os
 import uuid
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from contextlib import asynccontextmanager
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.responses import FileResponse
@@ -11,78 +10,47 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from .config import settings, KNOWN_INSECURE_SECRET_KEYS
+from .config import settings
 from .models import (
     UserCreate, UserResponse,
     CheckinRequest, CheckinResponse, MatchedUserInfo,
-    FeishuConfig, FeishuConfigResponse, FeishuConfigUpdate, FeishuTestResponse,
-    AttendanceLog, AdminLogin, TokenResponse,
-    ChangePasswordRequest, AdminUserResponse,
-    SyncRetryResponse, BatchSyncRetryResponse, SyncStatsResponse
+    FeishuConfig, FeishuTestResponse,
+    AttendanceLog, AdminLogin, TokenResponse
 )
 from .database import (
     init_db, add_user, get_user_by_student_id, get_all_users, delete_user,
     is_recent_duplicate_checkin, add_attendance_log, get_recent_attendance_logs,
-    atomic_record_checkin, update_attendance_log_feishu_status,
-    get_feishu_config, save_feishu_config, clear_all_attendance_logs,
-    verify_admin_password, update_admin_password, get_admin_credentials,
-    get_or_create_jwt_secret, is_using_default_password, get_sync_statistics
+    get_feishu_config, save_feishu_config
 )
 from .face_engine import face_engine
 from .feishu_service import feishu_service
-from .auth import create_access_token, decode_access_token
 
 security = HTTPBearer(auto_error=False)
+ADMIN_TOKEN_VALUE = "admin-logged-in-token-2026"
 
-async def verify_admin(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Dict[str, Any]:
-    """验证管理员 Bearer Token（严格校验签名和有效截止时间 exp），保护后台敏感接口"""
+async def verify_admin(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """验证管理员 Bearer Token，保护后台敏感接口"""
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="缺少管理员 Token，请先登录后台",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    payload = decode_access_token(credentials.credentials)
-    return payload
+    if credentials.credentials != ADMIN_TOKEN_VALUE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="管理员凭证无效或已过期，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return True
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化数据库、人脸内存缓存并执行安全防伪自检"""
+    """应用生命周期：启动时初始化数据库与人脸内存缓存"""
     print("🚀 启动人脸识别签到系统后台...")
     init_db()
     face_engine.reload_cache()
-
-    # 1. 安全防伪自检：确保持久化实例级强随机 JWT 密钥，阻断公开仓库默认密钥伪造 Token 漏洞
-    active_secret = get_or_create_jwt_secret()
-    if settings.SECRET_KEY in KNOWN_INSECURE_SECRET_KEYS:
-        print("🔒 [安全防护] 未检测到有效的环境变量 SECRET_KEY，系统已自动启用并持久化 SQLite 实例级 256 位防伪密钥，杜绝离线伪造 JWT。")
-
-    # 2. 初始弱口令检查
-    if is_using_default_password():
-        print("⚠️ [安全预警] 系统当前正使用默认初始密码 (admin123)，请进入管理后台及时修改密码！")
-
-    # 3. 启动后台 Outbox 同步自愈 Worker（每 30 秒轮询补偿同步网络抖动失败的记录）
-    async def background_sync_worker():
-        while True:
-            try:
-                await asyncio.sleep(30)
-                cfg = get_feishu_config()
-                if cfg.get("enabled", True):
-                    await feishu_service.sync_all_failed_logs(limit=20)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"后台同步队列扫描异常: {e}")
-
-    sync_task = asyncio.create_task(background_sync_worker())
-
     yield
-
-    sync_task.cancel()
-    try:
-        await sync_task
-    except asyncio.CancelledError:
-        pass
     print("🛑 正在关闭人脸识别签到系统后台...")
 
 app = FastAPI(
@@ -156,42 +124,51 @@ async def checkin(request: CheckinRequest):
         department=matched_user["department"]
     )
 
-    # 3. 数据库事务级原子防重判定与即时入库（多进程/多 Worker 强并发保护，无全局锁，绝不串行阻塞其他人员）
-    is_duplicate, log_id, checkin_time, last_time = atomic_record_checkin(
-        user_id=matched_user["id"],
-        name=matched_user["name"],
-        student_id=matched_user["student_id"],
-        department=matched_user["department"],
-        similarity=similarity,
+    # 3. 防重复打卡判定（如 5 分钟内）
+    is_duplicate, last_time = is_recent_duplicate_checkin(
+        matched_user["id"],
         cooldown_seconds=settings.REPEAT_CHECKIN_COOLDOWN_SECONDS
     )
 
     if is_duplicate:
+        # 重复签到：记录日志为 REPEATED，但不重复向飞书推送
+        add_attendance_log(
+            user_id=matched_user["id"],
+            name=matched_user["name"],
+            student_id=matched_user["student_id"],
+            department=matched_user["department"],
+            similarity=similarity,
+            feishu_status="REPEATED_SKIPPED",
+            error_msg=f"防重复规则拦截：最近一次打卡时间为 {last_time}"
+        )
         return CheckinResponse(
             success=True,
             code=201,
             message=f"您已签到成功（上次签到时间：{last_time}），请勿重复刷脸！",
             user=user_info,
             similarity=round(similarity, 4),
-            checkin_time=checkin_time,
+            checkin_time=now_str,
             is_repeated=True,
             feishu_synced=False,
             feishu_message="处于防重复冷却期内，无需重复同步飞书"
         )
 
-    # 4. 首次签到成功：推送至飞书妙搭（附带唯一流水 log_id 作为幂等键，各人并发独立异步处理）
+    # 4. 首次签到成功：推送至飞书妙搭
     feishu_ok, feishu_msg = await feishu_service.push_checkin(
         name=matched_user["name"],
         student_id=matched_user["student_id"],
         department=matched_user["department"],
         similarity=similarity,
-        checkin_time=checkin_time,
-        log_id=log_id
+        checkin_time=now_str
     )
 
-    # 5. 更新本地流水记录的最终飞书状态
-    update_attendance_log_feishu_status(
-        log_id=log_id,
+    # 5. 持久化记录到 SQLite 签到日志
+    add_attendance_log(
+        user_id=matched_user["id"],
+        name=matched_user["name"],
+        student_id=matched_user["student_id"],
+        department=matched_user["department"],
+        similarity=similarity,
         feishu_status="SUCCESS" if feishu_ok else "FEISHU_PUSH_FAILED",
         error_msg=None if feishu_ok else feishu_msg
     )
@@ -202,7 +179,7 @@ async def checkin(request: CheckinRequest):
         message="签到成功！",
         user=user_info,
         similarity=round(similarity, 4),
-        checkin_time=checkin_time,
+        checkin_time=now_str,
         is_repeated=False,
         feishu_synced=feishu_ok,
         feishu_message=feishu_msg
@@ -295,50 +272,22 @@ async def remove_user(user_id: int):
     return {"success": True, "message": "人员已成功删除"}
 
 # ----------------- 管理后台：飞书妙搭配置与连通性测试 -----------------
-@app.get("/api/config/feishu", response_model=FeishuConfigResponse, dependencies=[Depends(verify_admin)])
+@app.get("/api/config/feishu", response_model=FeishuConfig, dependencies=[Depends(verify_admin)])
 async def get_feishu_configuration():
-    """
-    读取当前飞书配置（需管理员鉴权）
-    安全保护：严格脱敏，不向浏览器返回明文 app_secret，仅返回脱敏状态 has_app_secret
-    """
+    """读取当前飞书配置（需管理员鉴权）"""
     cfg = get_feishu_config()
-    secret = cfg.get("app_secret", "")
-    has_secret = bool(secret and len(str(secret).strip()) > 0)
-    return FeishuConfigResponse(
-        mode=cfg.get("mode", "webhook"),
-        enabled=cfg.get("enabled", True),
-        webhook_url=cfg.get("webhook_url", ""),
-        app_id=cfg.get("app_id", ""),
-        has_app_secret=has_secret,
-        app_secret_masked="************" if has_secret else None,
-        app_token=cfg.get("app_token", ""),
-        table_id=cfg.get("table_id", "")
-    )
+    return FeishuConfig(**cfg)
 
 @app.post("/api/config/feishu", dependencies=[Depends(verify_admin)])
-async def update_feishu_configuration(config: FeishuConfigUpdate):
-    """
-    更新保存飞书配置（需管理员鉴权）
-    只写型敏感凭据保护：若 app_secret 为空或脱敏符号，后端自动保留已有安全存储的密钥
-    主动清空飞书 token 缓存，确保切换应用时立即生效
-    """
+async def update_feishu_configuration(config: FeishuConfig):
+    """更新保存飞书配置（需管理员鉴权）"""
     save_feishu_config(config.model_dump())
-    feishu_service.clear_token_cache()
-    return {"success": True, "message": "飞书配置已成功保存！应用密钥已安全隔离保存在服务端。"}
+    return {"success": True, "message": "飞书配置已成功保存！"}
 
 @app.post("/api/feishu/test", response_model=FeishuTestResponse, dependencies=[Depends(verify_admin)])
-async def test_feishu_integration(custom_cfg: Optional[FeishuConfigUpdate] = None):
-    """
-    测试飞书妙搭 Webhook 或多维表格 API 连通性（需管理员鉴权）
-    若测试载荷未包含 app_secret，自动使用服务端持久化的已有密钥
-    """
+async def test_feishu_integration(custom_cfg: Optional[FeishuConfig] = None):
+    """测试飞书妙搭 Webhook 或多维表格 API 连通性（需管理员鉴权）"""
     cfg_dict = custom_cfg.model_dump() if custom_cfg else None
-    if cfg_dict:
-        incoming_secret = cfg_dict.get("app_secret")
-        if not incoming_secret or incoming_secret == "************":
-            saved_cfg = get_feishu_config()
-            cfg_dict["app_secret"] = saved_cfg.get("app_secret", "")
-
     success, message, data = await feishu_service.test_connection(cfg_dict)
     return FeishuTestResponse(
         success=success,
@@ -353,89 +302,13 @@ async def get_logs(limit: int = 50):
     logs = get_recent_attendance_logs(limit=limit)
     return [AttendanceLog(**log) for log in logs]
 
-@app.delete("/api/logs", dependencies=[Depends(verify_admin)])
-async def clear_logs():
-    """清空全部打卡流水记录（需管理员鉴权）"""
-    clear_all_attendance_logs()
-    return {"success": True, "message": "已成功清空所有签到流水记录"}
-
-# ----------------- 外发队列 (Outbox) 与飞书同步补偿管理 -----------------
-@app.post("/api/logs/{log_id}/retry", response_model=SyncRetryResponse, dependencies=[Depends(verify_admin)])
-async def retry_single_log(log_id: int):
-    """
-    手动重试同步单条签到流水记录至飞书（支持幂等对账与 Schema 适配）
-    """
-    success, message, record_id = await feishu_service.sync_single_log(log_id)
-    return SyncRetryResponse(
-        success=success,
-        message=message,
-        record_id=record_id
-    )
-
-@app.post("/api/logs/retry-all", response_model=BatchSyncRetryResponse, dependencies=[Depends(verify_admin)])
-async def retry_all_failed_logs():
-    """
-    一键批量重试所有因网络抖动失败的签到流水（Outbox 自愈补偿）
-    """
-    res = await feishu_service.sync_all_failed_logs(limit=50)
-    return BatchSyncRetryResponse(
-        total=res.get("total", 0),
-        succeeded=res.get("succeeded", 0),
-        failed=res.get("failed", 0),
-        details=res.get("details", []),
-        message=res.get("message", "")
-    )
-
-@app.get("/api/sync/status", response_model=SyncStatsResponse, dependencies=[Depends(verify_admin)])
-async def get_sync_status():
-    """获取签到与飞书同步全链路统计指标（用于对账与看板展示）"""
-    stats = get_sync_statistics()
-    return SyncStatsResponse(**stats)
-
-# ----------------- 管理员认证与安全管理 -----------------
+# ----------------- 管理员简易登录 -----------------
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(auth: AdminLogin):
-    """管理员登录验证：校验 SQLite 数据库中的账号密码，并签发标准 24 小时 HS256 JWT"""
-    if not verify_admin_password(auth.username, auth.password):
-        raise HTTPException(status_code=401, detail="账号或密码错误，请核对后重试")
-
-    expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(
-        data={"sub": auth.username},
-        expires_delta=expires_delta
-    )
-    return TokenResponse(
-        access_token=token,
-        token_type="bearer",
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    )
-
-@app.get("/api/auth/me", response_model=AdminUserResponse)
-async def get_current_admin(current_user: Dict[str, Any] = Depends(verify_admin)):
-    """获取当前登录管理员信息、JWT Token 有效期及弱口令安全风险标记"""
-    username = current_user.get("sub", settings.ADMIN_USERNAME)
-    return AdminUserResponse(
-        username=username,
-        authenticated=True,
-        expires_at=current_user.get("exp"),
-        is_default_password=is_using_default_password()
-    )
-
-@app.post("/api/auth/change-password")
-async def change_admin_password(
-    req: ChangePasswordRequest,
-    current_user: Dict[str, Any] = Depends(verify_admin)
-):
-    """
-    修改管理员密码：
-    1. 需携带有效 JWT Bearer Token
-    2. 校验旧密码
-    3. 将全新加盐哈希保存至 SQLite 数据库
-    """
-    ok, msg = update_admin_password(req.old_password, req.new_password)
-    if not ok:
-        raise HTTPException(status_code=400, detail=msg)
-    return {"success": True, "message": msg}
+    """管理员登录验证"""
+    if auth.username == settings.ADMIN_USERNAME and auth.password == settings.ADMIN_PASSWORD:
+        return TokenResponse(access_token="admin-logged-in-token-2026", token_type="bearer")
+    raise HTTPException(status_code=401, detail="账号或密码错误")
 
 # ----------------- 生产环境：挂载前端构建产物 (dist) 与 SPA 路由支持 -----------------
 FRONTEND_DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist"))

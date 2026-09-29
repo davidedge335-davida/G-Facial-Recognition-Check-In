@@ -20,28 +20,23 @@ import {
   X,
   BookOpen,
   BarChart3,
-  TrendingUp,
-  RotateCw
+  TrendingUp
 } from 'lucide-react';
 import { PersonRecord, FeishuConfigState, CheckinLog } from '../types';
 import { generatePseudo512Vector, processImageFile } from '../utils/faceMatcher';
 import { CheckinDashboard } from './CheckinDashboard';
 import { PersonAvatar } from './PersonAvatar';
-import { getApiUrl, authFetch } from '../utils/api';
+import { getApiUrl } from '../utils/api';
 
 interface AdminPanelProps {
   persons: PersonRecord[];
   onAddPerson: (person: PersonRecord, photoBase64?: string) => Promise<{ success: boolean; message?: string }> | void;
-  onDeletePerson: (id: string) => Promise<{ success: boolean; message?: string }> | void;
+  onDeletePerson: (id: string) => void;
   feishuConfig: FeishuConfigState;
-  onUpdateFeishuConfig: (config: FeishuConfigState) => Promise<{ success: boolean; message?: string }> | void;
+  onUpdateFeishuConfig: (config: FeishuConfigState) => void;
   logs: CheckinLog[];
-  onClearLogs: () => Promise<{ success: boolean; message?: string }> | void;
-  onRetryLog?: (logId: string) => Promise<{ success: boolean; message?: string }>;
-  onRetryAllFailedLogs?: () => Promise<{ success: boolean; message?: string }>;
+  onClearLogs: () => void;
   onOpenHttpsGuide: () => void;
-  isDefaultPassword?: boolean;
-  onChangePasswordClick?: () => void;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
@@ -52,17 +47,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onUpdateFeishuConfig,
   logs,
   onClearLogs,
-  onRetryLog,
-  onRetryAllFailedLogs,
-  onOpenHttpsGuide,
-  isDefaultPassword,
-  onChangePasswordClick
+  onOpenHttpsGuide
 }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'feishu' | 'logs'>('dashboard');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [retryingLogId, setRetryingLogId] = useState<string | null>(null);
-  const [isRetryingAll, setIsRetryingAll] = useState<boolean>(false);
-  const [retryFeedback, setRetryFeedback] = useState<string | null>(null);
 
   // 新增人员表单状态
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
@@ -81,8 +69,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // 飞书配置表单状态
   const [formConfig, setFormConfig] = useState<FeishuConfigState>({ ...feishuConfig });
   const [saveSuccessTip, setSaveSuccessTip] = useState<string | null>(null);
-  const [saveErrorTip, setSaveErrorTip] = useState<string | null>(null);
-  const [isSavingFeishu, setIsSavingFeishu] = useState<boolean>(false);
   const [lastSavedTime, setLastSavedTime] = useState<string>(() => {
     return localStorage.getItem('face_checkin_feishu_saved_at') || '未曾修改';
   });
@@ -257,53 +243,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       message: '正在向飞书妙搭发起连通性测试...'
     });
 
-    try {
-      const payload: any = {
-        mode: formConfig.mode,
-        enabled: formConfig.enabled,
-        webhook_url: formConfig.webhookUrl,
-        app_id: formConfig.appId,
-        app_token: formConfig.appToken,
-        table_id: formConfig.tableId
-      };
-      if (formConfig.appSecret && formConfig.appSecret.trim()) {
-        payload.app_secret = formConfig.appSecret.trim();
-      }
-      const res = await authFetch('/api/feishu/test', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
+    const token = sessionStorage.getItem('face_checkin_token');
+    if (token) {
+      try {
+        const payload = {
+          mode: formConfig.mode,
+          enabled: formConfig.enabled,
+          webhook_url: formConfig.webhookUrl,
+          app_id: formConfig.appId,
+          app_secret: formConfig.appSecret,
+          app_token: formConfig.appToken,
+          table_id: formConfig.tableId
+        };
+        const res = await fetch(getApiUrl('/api/feishu/test'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        setTestResult({
-          tested: true,
-          loading: false,
-          success: data.success,
-          message: data.message,
-          detail: data.response_data ? JSON.stringify(data.response_data, null, 2) : undefined
-        });
-        return;
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setTestResult({
-          tested: true,
-          loading: false,
-          success: false,
-          message: data.detail || `测试失败 (HTTP ${res.status})`
-        });
-        return;
+        if (res.ok) {
+          const data = await res.json();
+          setTestResult({
+            tested: true,
+            loading: false,
+            success: data.success,
+            message: data.message,
+            detail: data.response_data ? JSON.stringify(data.response_data, null, 2) : undefined
+          });
+          return;
+        }
+      } catch (backendErr) {
+        // 后端可能未运行，回退到客户端直接探测
       }
-    } catch (backendErr: any) {
-      setTestResult({
-        tested: true,
-        loading: false,
-        success: false,
-        message: backendErr.message || '网络连接失败，请确认后端已启动'
-      });
     }
 
     try {
@@ -399,48 +373,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   // 保存飞书配置
-  const handleSaveFeishuConfig = async (e: React.FormEvent) => {
+  const handleSaveFeishuConfig = (e: React.FormEvent) => {
     e.preventDefault();
-    setSaveSuccessTip(null);
-    setSaveErrorTip(null);
-    setIsSavingFeishu(true);
-
-    try {
-      const res = await onUpdateFeishuConfig(formConfig);
-      if (res && !res.success) {
-        setSaveErrorTip(res.message || '后端保存飞书配置失败，请确认管理员登录状态');
-        return;
-      }
-      const nowStr = new Date().toLocaleString();
-      localStorage.setItem('face_checkin_feishu_saved_at', nowStr);
-      setLastSavedTime(nowStr);
-      // 清空本地明文 App Secret 输入，并标记服务端已安全持久化
-      setFormConfig(prev => ({
-        ...prev,
-        appSecret: '',
-        hasAppSecret: prev.hasAppSecret || Boolean(prev.appSecret && prev.appSecret.trim())
-      }));
-      setSaveSuccessTip(`飞书配置已成功保存至系统底座！当前模式：${formConfig.mode === 'bitable' ? '多维表格 API' : 'Webhook'}。`);
-      setTimeout(() => {
-        setSaveSuccessTip(null);
-      }, 6000);
-    } catch (err: any) {
-      setSaveErrorTip(err.message || '保存飞书配置遇到异常');
-    } finally {
-      setIsSavingFeishu(false);
-    }
+    onUpdateFeishuConfig(formConfig);
+    const nowStr = new Date().toLocaleString();
+    localStorage.setItem('face_checkin_feishu_saved_at', nowStr);
+    setLastSavedTime(nowStr);
+    setSaveSuccessTip(`飞书配置已成功保存！数据已持久化写入浏览器 LocalStorage（包含模式：${formConfig.mode === 'bitable' ? '多维表格 API' : 'Webhook'}），刷新或重启不会丢失。`);
+    // 5秒后自动隐藏提示卡片
+    setTimeout(() => {
+      setSaveSuccessTip(null);
+    }, 6000);
   };
 
   // 判断是否有未保存的更改
   const isFormChanged = useMemo(() => {
-    if (formConfig.mode !== feishuConfig.mode) return true;
-    if (formConfig.enabled !== feishuConfig.enabled) return true;
-    if (formConfig.webhookUrl !== feishuConfig.webhookUrl) return true;
-    if (formConfig.appId !== feishuConfig.appId) return true;
-    if (formConfig.appToken !== feishuConfig.appToken) return true;
-    if (formConfig.tableId !== feishuConfig.tableId) return true;
-    if (Boolean(formConfig.appSecret && formConfig.appSecret.trim())) return true;
-    return false;
+    return JSON.stringify(formConfig) !== JSON.stringify(feishuConfig);
   }, [formConfig, feishuConfig]);
 
   const filteredPersons = persons.filter(
@@ -460,27 +408,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         <div><span className="journal-eyebrow">THE ORGANIZER / 管理页</span><h1>把每一份到来，收好。</h1></div>
         <p>人员、记录与同步，在这里有序整理。</p>
       </div>
-
-      {/* 初始弱密码安全风险警示条 */}
-      {isDefaultPassword && (
-        <div className="p-3.5 bg-[rgba(229,169,155,0.2)] border border-[#E5A99B] rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs text-[#B25A45]">
-          <div className="flex items-center space-x-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>
-              <strong>安全警示：</strong>当前管理员账户仍使用系统初始密码 (admin123)，容易遭受未授权访问。建议立即修改。
-            </span>
-          </div>
-          {onChangePasswordClick && (
-            <button
-              type="button"
-              onClick={onChangePasswordClick}
-              className="px-3 py-1 bg-[#B25A45] hover:bg-[#974533] text-white rounded-lg font-bold cursor-pointer whitespace-nowrap transition-all shadow-xs"
-            >
-              立即修改密码
-            </button>
-          )}
-        </div>
-      )}
       {/* 顶部标签页切换导航 */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#E3DCD1]">
         <div className="admin-tabs flex flex-wrap items-center gap-1 sm:gap-2 bg-[#F3EFE6] p-1.5 rounded-2xl border border-[#D6CEC1] text-xs">
@@ -611,15 +538,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           {person.name}
                         </span>
                         <button
-                          onClick={async () => {
-                            if (confirm(`确认从系统底库删除人员 [${person.name}] 吗？\n该人员的照片与 512 维特征向量将从服务器彻底移除。`)) {
-                              const res = await onDeletePerson(person.id);
-                              if (res && !res.success) {
-                                alert(res.message || '后端删除人员失败，请刷新重试');
-                              }
+                          onClick={() => {
+                            if (confirm(`确认删除人员 [${person.name}] 吗？`)) {
+                              onDeletePerson(person.id);
                             }
                           }}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-[#8E8675] hover:text-[#C27D6B] rounded transition-opacity cursor-pointer"
+                          className="opacity-0 group-hover:opacity-100 p-1 text-[#8E8675] hover:text-[#C27D6B] rounded transition-opacity"
                           title="删除人员"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -677,24 +601,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setSaveSuccessTip(null)}
-                className="text-[#3E6546] hover:text-[#1F3E26] p-1 font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          {/* 保存失败的即时横幅 */}
-          {saveErrorTip && (
-            <div className="p-3 bg-[#F8EAE7] border border-[#E5A99B] rounded-xl text-xs text-[#B25A45] flex items-center justify-between animate-fadeIn">
-              <div className="flex items-center space-x-2">
-                <AlertCircle className="w-4 h-4 text-[#B25A45] shrink-0" />
-                <span>{saveErrorTip}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSaveErrorTip(null)}
-                className="text-[#B25A45] hover:text-[#7A2718] p-1 font-bold cursor-pointer"
+                className="text-[#3E6546] hover:text-[#1F3E26] p-1 font-bold"
               >
                 ✕
               </button>
@@ -766,30 +673,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   />
                 </div>
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-gaegu text-base text-[#4A453B]">App Secret (应用密钥 · 只写保密)</label>
-                    {formConfig.hasAppSecret ? (
-                      <span className="mono text-[11px] text-[#4C7253] bg-[rgba(126,168,133,0.15)] px-2 py-0.5 rounded border border-[#7EA885]/40 flex items-center gap-1">
-                        <Check className="w-3 h-3" />
-                        已安全托管在服务端
-                      </span>
-                    ) : (
-                      <span className="mono text-[11px] text-[#B25A45] bg-[rgba(229,169,155,0.15)] px-2 py-0.5 rounded border border-[#E5A99B]/40">
-                        未设置密钥
-                      </span>
-                    )}
-                  </div>
+                  <label className="font-gaegu text-base text-[#4A453B]">App Secret</label>
                   <input
                     type="password"
-                    autoComplete="new-password"
-                    placeholder={formConfig.hasAppSecret ? '•••••••••••••••• (已配置，留空表示保持现有密钥不变)' : '请输入飞书自建应用 App Secret'}
                     value={formConfig.appSecret || ''}
                     onChange={e => setFormConfig({ ...formConfig, appSecret: e.target.value })}
-                    className="w-full p-2 bg-[#EEE8DE] border border-[#D6CEC1] rounded-xl mono text-xs text-[#4A453B] placeholder-[#8E8675]"
+                    className="w-full p-2 bg-[#EEE8DE] border border-[#D6CEC1] rounded-xl mono text-xs text-[#4A453B]"
                   />
-                  <p className="text-[11px] text-[#8E8675] mt-1 font-sans">
-                    出于安全合规要求，密钥仅由服务端安全隔离调用，绝不会被传回浏览器或写入本地存储。
-                  </p>
                 </div>
                 <div>
                   <label className="font-gaegu text-base text-[#4A453B]">Bitable App Token</label>
@@ -854,226 +744,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </form>
       )}
 
-      {/* ----------------- TAB 3: 签到流水审计与飞书最终一致性补偿 ----------------- */}
-      {activeTab === 'logs' && (() => {
-        const syncStats = {
-          success: logs.filter(l => l.feishuStatus === 'SUCCESS').length,
-          failed: logs.filter(l => l.feishuStatus === 'FEISHU_PUSH_FAILED').length,
-          repeated: logs.filter(l => l.feishuStatus === 'REPEATED_SKIPPED').length,
-          pending: logs.filter(l => l.feishuStatus === 'PENDING').length
-        };
-
-        return (
-          <div className="space-y-4">
-            {/* 流水顶部统计与操作栏 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-[#F4EFE6] border border-[#D6CEC1] rounded-2xl">
-              <div>
-                <div className="flex items-center space-x-2">
-                  <History className="w-4 h-4 text-[#B25A45]" />
-                  <span className="font-gaegu text-xl text-[#4A453B] font-bold">
-                    实时签到流水与同步审计
-                  </span>
-                  <span className="mono text-xs bg-[#EEE8DE] px-2 py-0.5 rounded-full text-[#7D7667]">
-                    共 {logs.length} 条
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-[rgba(126,168,133,0.18)] text-[#3E6546] border border-[#7EA885]/40 font-medium">
-                    ✓ 飞书已同步: {syncStats.success}
-                  </span>
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-md font-medium border ${
-                    syncStats.failed > 0 
-                      ? 'bg-[rgba(229,169,155,0.25)] text-[#B25A45] border-[#E5A99B] animate-pulse'
-                      : 'bg-[#EEE8DE] text-[#8E8675] border-[#D6CEC1]'
-                  }`}>
-                    {syncStats.failed > 0 ? '⚠' : '•'} 同步待补录: {syncStats.failed}
-                  </span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#EEE8DE] text-[#7D7667] border border-[#D6CEC1]">
-                    防重拦截: {syncStats.repeated}
-                  </span>
-                  {syncStats.pending > 0 && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-[rgba(235,190,110,0.2)] text-[#91621E] border border-[#E5BD78]">
-                      排队中: {syncStats.pending}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 self-end sm:self-center">
-                {syncStats.failed > 0 && onRetryAllFailedLogs && (
-                  <button
-                    type="button"
-                    disabled={isRetryingAll}
-                    onClick={async () => {
-                      setIsRetryingAll(true);
-                      const res = await onRetryAllFailedLogs();
-                      setIsRetryingAll(false);
-                      if (res) {
-                        setRetryFeedback(res.message || (res.success ? '批量重试完成' : '重试遇到异常'));
-                        setTimeout(() => setRetryFeedback(null), 5000);
-                      }
-                    }}
-                    className="px-3 py-1.5 bg-[#B25A45] hover:bg-[#974533] text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                  >
-                    <RotateCw className={`w-3.5 h-3.5 ${isRetryingAll ? 'animate-spin' : ''}`} />
-                    <span>{isRetryingAll ? '批量补录中...' : `一键补录 (${syncStats.failed})`}</span>
-                  </button>
-                )}
-
-                {logs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (confirm('确认清空所有签到流水记录吗？此操作将永久清空服务器数据库中的签到日志。')) {
-                        const res = await onClearLogs();
-                        if (res && !res.success) {
-                          alert(res.message || '后端清空流水失败，请刷新重试');
-                        }
-                      }
-                    }}
-                    className="font-gaegu text-base text-[#8E8675] hover:text-[#C27D6B] underline px-2 py-1 cursor-pointer"
-                  >
-                    清空流水
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* 失败补偿警示与操作提示条 */}
-            {syncStats.failed > 0 && (
-              <div className="p-3 bg-[rgba(229,169,155,0.2)] border border-[#E5A99B] rounded-xl text-xs text-[#B25A45] flex items-center justify-between gap-2">
-                <div className="flex items-center space-x-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-[#B25A45]" />
-                  <span>
-                    <strong>网络抖动保障机制：</strong>检测到 {syncStats.failed} 条打卡因飞书网络波动尚未写入多维表格。后台 Outbox 引擎正在以 30 秒间隔自动补偿重试，支持最终一致性写入。
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* 操作反馈浮条 */}
-            {retryFeedback && (
-              <div className="p-3 bg-[rgba(126,168,133,0.2)] border border-[#7EA885] rounded-xl text-xs text-[#3E6546] flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Check className="w-4 h-4 shrink-0 text-[#4C7253]" />
-                  <span>{retryFeedback}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setRetryFeedback(null)}
-                  className="text-[#3E6546] hover:text-[#1F3E26] font-bold px-1"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-
-            {logs.length === 0 ? (
-              <div className="p-8 text-center bg-[#EEE8DE] border border-[#D6CEC1] rounded-2xl">
-                <History className="w-8 h-8 text-[#8E8675] mx-auto mb-2" />
-                <p className="font-gaegu text-lg text-[#5C5648]">暂无签到流水记录</p>
-              </div>
-            ) : (
-              <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
-                {logs.map(log => {
-                  const matchedPerson = persons.find(p => p.id === log.userId || p.studentId === log.studentId);
-                  const avatar = matchedPerson?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
-                  const isRepeated = log.feishuStatus === 'REPEATED_SKIPPED';
-                  const isSynced = log.feishuStatus === 'SUCCESS';
-                  const isFailed = log.feishuStatus === 'FEISHU_PUSH_FAILED';
-                  const isPending = log.feishuStatus === 'PENDING';
-
-                  return (
-                    <div
-                      key={log.id}
-                      className="p-3 bg-[#FFFCF8] border border-[#E3DCD1] rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs shadow-xs"
-                    >
-                      <div className="flex items-center space-x-3 min-w-0">
-                        <img
-                          src={avatar}
-                          alt={log.name}
-                          className="w-10 h-10 rounded-full object-cover border border-[#D6CEC1] shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <div className="flex items-center space-x-2">
-                            <span className="font-gaegu text-lg font-bold text-[#4A453B] truncate">{log.name}</span>
-                            <span className="mono text-[#8E8675] truncate">{log.studentId}</span>
-                            <span className="text-[11px] text-[#7D7667] truncate">· {log.department}</span>
-                          </div>
-                          <div className="text-[11px] text-[#8E8675] flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                            <span className="flex items-center space-x-1">
-                              <Clock className="w-3 h-3 text-[#A8A193]" />
-                              <span className="mono">{log.checkinTime}</span>
-                            </span>
-                            <span>· 相似度 {(log.similarity * 100).toFixed(1)}%</span>
-                            {log.feishuRecordId && (
-                              <span className="mono text-[10px] text-[#7EA885] truncate">
-                                飞书ID: {log.feishuRecordId}
-                              </span>
-                            )}
-                          </div>
-                          {isFailed && log.errorMsg && (
-                            <div className="text-[11px] text-[#B25A45] mt-0.5 break-all">
-                              原因: {log.errorMsg}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
-                        {isRepeated ? (
-                          <span className="vintage-stamp text-xs px-2 py-0.5">防重拦截</span>
-                        ) : (
-                          <span className="vintage-stamp-green text-xs px-2 py-0.5">打卡成功</span>
-                        )}
-
-                        {isSynced && (
-                          <span className="mono text-[11px] bg-[rgba(126,168,133,0.18)] text-[#3E6546] px-2 py-0.5 rounded border border-[#7EA885]/40 font-medium">
-                            ✓ 飞书已同步
-                          </span>
-                        )}
-
-                        {isPending && (
-                          <span className="mono text-[11px] bg-[rgba(235,190,110,0.2)] text-[#91621E] px-2 py-0.5 rounded border border-[#E5BD78]">
-                            队列写入中
-                          </span>
-                        )}
-
-                        {isFailed && (
-                          <div className="flex items-center space-x-1.5">
-                            <span className="mono text-[11px] bg-[rgba(229,169,155,0.2)] text-[#B25A45] px-2 py-0.5 rounded border border-[#E5A99B]">
-                              同步失败 {log.retryCount ? `(重试${log.retryCount}次)` : ''}
-                            </span>
-                            {onRetryLog && (
-                              <button
-                                type="button"
-                                disabled={retryingLogId === log.id}
-                                onClick={async () => {
-                                  setRetryingLogId(log.id);
-                                  const res = await onRetryLog(log.id);
-                                  setRetryingLogId(null);
-                                  if (res) {
-                                    setRetryFeedback(res.message || (res.success ? '重试成功' : '重试未成功'));
-                                    setTimeout(() => setRetryFeedback(null), 4000);
-                                  }
-                                }}
-                                className="px-2 py-1 bg-[#B25A45] hover:bg-[#974533] text-white rounded text-[11px] font-bold flex items-center space-x-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                              >
-                                <RotateCw className={`w-3 h-3 ${retryingLogId === log.id ? 'animate-spin' : ''}`} />
-                                <span>{retryingLogId === log.id ? '重试中...' : '重试'}</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+      {/* ----------------- TAB 3: 签到流水审计 ----------------- */}
+      {activeTab === 'logs' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="font-gaegu text-lg text-[#4A453B] font-bold">
+              实时打卡流水记录 ({logs.length} 条)
+            </span>
+            {logs.length > 0 && (
+              <button
+                onClick={onClearLogs}
+                className="font-gaegu text-base text-[#8E8675] hover:text-[#C27D6B] underline"
+              >
+                清空流水
+              </button>
             )}
           </div>
-        );
-      })()}
+
+          {logs.length === 0 ? (
+            <div className="p-8 text-center bg-[#EEE8DE] border border-[#D6CEC1] rounded-2xl">
+              <History className="w-8 h-8 text-[#8E8675] mx-auto mb-2" />
+              <p className="font-gaegu text-lg text-[#5C5648]">暂无签到流水记录</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              {logs.map(log => {
+                const matchedPerson = persons.find(p => p.id === log.userId || p.studentId === log.studentId);
+                const avatar = matchedPerson?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+                const isRepeated = log.feishuStatus === 'REPEATED_SKIPPED';
+                const isSynced = log.feishuStatus === 'SUCCESS';
+
+                return (
+                  <div
+                    key={log.id}
+                    className="p-3 bg-[#FFFCF8] border border-[#E3DCD1] rounded-xl flex items-center justify-between text-xs shadow-xs"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <img
+                        src={avatar}
+                        alt={log.name}
+                        className="w-10 h-10 rounded-full object-cover border border-[#D6CEC1]"
+                      />
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <span className="font-gaegu text-lg font-bold text-[#4A453B]">{log.name}</span>
+                          <span className="mono text-[#8E8675]">{log.studentId}</span>
+                        </div>
+                        <div className="text-[11px] text-[#8E8675] flex items-center space-x-2">
+                          <Clock className="w-3 h-3" />
+                          <span className="mono">{log.checkinTime}</span>
+                          <span>· 匹配度 {(log.similarity * 100).toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      {isRepeated ? (
+                        <span className="vintage-stamp text-xs px-2 py-0.5">防重拦截</span>
+                      ) : (
+                        <span className="vintage-stamp-green text-xs px-2 py-0.5">签到成功</span>
+                      )}
+
+                      {isSynced && (
+                        <span className="mono text-[10px] bg-[rgba(126,168,133,0.15)] text-[#4C7253] px-1.5 py-0.5 rounded border border-[#7EA885]/40">
+                          飞书已同步
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ----------------- 录入新人员正脸弹窗 ----------------- */}
       {isAddModalOpen && (

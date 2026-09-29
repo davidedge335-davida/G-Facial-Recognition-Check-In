@@ -16,10 +16,8 @@ export interface CheckinLog {
   department: string;
   similarity: number;
   checkinTime: string;
-  feishuStatus: 'SUCCESS' | 'REPEATED_SKIPPED' | 'FEISHU_PUSH_FAILED' | 'LOCAL_SAVED' | 'PENDING';
+  feishuStatus: 'SUCCESS' | 'REPEATED_SKIPPED' | 'FEISHU_PUSH_FAILED' | 'LOCAL_SAVED';
   errorMsg?: string;
-  retryCount?: number;
-  feishuRecordId?: string;
 }
 
 export interface FeishuConfigState {
@@ -28,8 +26,6 @@ export interface FeishuConfigState {
   webhookUrl: string;
   appId: string;
   appSecret: string;
-  hasAppSecret?: boolean;
-  appSecretMasked?: string;
   appToken: string;
   tableId: string;
 }
