@@ -3,43 +3,15 @@ import { PersonRecord, CheckinLog, FeishuConfigState } from '../types';
 export const DEFAULT_FEISHU_CONFIG: FeishuConfigState = {
   mode: 'webhook',
   enabled: true,
-  webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/demo-miaoda-webhook',
+  webhookUrl: '',
   appId: '',
   appSecret: '',
   appToken: '',
   tableId: '',
 };
 
-// 预设人员示例数据；头像随站点提供，避免外部图床失败导致相册空白。
-export const INITIAL_PERSONS: PersonRecord[] = [
-  {
-    id: 'user_001',
-    name: '张子豪',
-    studentId: '20240101',
-    department: '计算机学院 / 软件工程2401班',
-    avatarUrl: '/images/demo-zhang.jpg',
-    embedding: generatePseudo512Vector('user_001_zhangzihao'),
-    createdAt: '2026-09-20 10:00:00'
-  },
-  {
-    id: 'user_002',
-    name: '林雨薇',
-    studentId: '20240102',
-    department: '人工智能学院 / 智能科学2402班',
-    avatarUrl: '/images/demo-lin.jpg',
-    embedding: generatePseudo512Vector('user_002_linyuwei'),
-    createdAt: '2026-09-21 09:15:00'
-  },
-  {
-    id: 'user_003',
-    name: '陈博文',
-    studentId: '20240103',
-    department: '电子工程系 / 微电子2401班',
-    avatarUrl: '/images/demo-chen.jpg',
-    embedding: generatePseudo512Vector('user_003_chenbowen'),
-    createdAt: '2026-09-21 14:20:00'
-  }
-];
+// 生产环境不预置虚假人员，避免后端空库时在前端显示可签到的演示数据。
+export const INITIAL_PERSONS: PersonRecord[] = [];
 
 /**
  * 确定性生成 512 维 L2 归一化特征向量

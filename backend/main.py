@@ -1,6 +1,7 @@
+import asyncio
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
@@ -8,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
 
 from .config import settings
 from .models import (
@@ -19,13 +21,13 @@ from .models import (
 from .database import (
     init_db, add_user, get_user_by_student_id, get_all_users, delete_user,
     is_recent_duplicate_checkin, add_attendance_log, get_recent_attendance_logs,
-    get_feishu_config, save_feishu_config
+    get_feishu_config, save_feishu_config, clear_attendance_logs
 )
 from .face_engine import face_engine
 from .feishu_service import feishu_service
 
 security = HTTPBearer(auto_error=False)
-ADMIN_TOKEN_VALUE = "admin-logged-in-token-2026"
+checkin_lock = asyncio.Lock()
 
 async def verify_admin(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
     """验证管理员 Bearer Token，保护后台敏感接口"""
@@ -35,7 +37,11 @@ async def verify_admin(credentials: Optional[HTTPAuthorizationCredentials] = Dep
             detail="缺少管理员 Token，请先登录后台",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if credentials.credentials != ADMIN_TOKEN_VALUE:
+    try:
+        payload = jwt.decode(credentials.credentials, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("sub") != settings.ADMIN_USERNAME:
+            raise JWTError("invalid subject")
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="管理员凭证无效或已过期，请重新登录",
@@ -123,10 +129,13 @@ async def checkin(request: CheckinRequest):
         department=matched_user["department"]
     )
 
-    # 3. 防重复打卡判定（如 5 分钟内）
+    # 串行化“防重检查 -> 飞书推送 -> 写流水”，避免手机连拍并发导致同一人重复入表。
+    async with checkin_lock:
+        return await _complete_checkin(matched_user, user_info, similarity, now_str)
+
+async def _complete_checkin(matched_user, user_info, similarity: float, now_str: str) -> CheckinResponse:
     is_duplicate, last_time = is_recent_duplicate_checkin(
-        matched_user["id"],
-        cooldown_seconds=settings.REPEAT_CHECKIN_COOLDOWN_SECONDS
+        matched_user["id"], cooldown_seconds=settings.REPEAT_CHECKIN_COOLDOWN_SECONDS
     )
 
     if is_duplicate:
@@ -301,10 +310,22 @@ async def get_logs(limit: int = 50):
     logs = get_recent_attendance_logs(limit=limit)
     return [AttendanceLog(**log) for log in logs]
 
+@app.delete("/api/logs", dependencies=[Depends(verify_admin)])
+async def clear_logs():
+    """清空签到流水（需管理员鉴权）。"""
+    deleted = clear_attendance_logs()
+    return {"success": True, "deleted": deleted}
+
 # ----------------- 管理员简易登录 -----------------
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(auth: AdminLogin):
     """管理员登录验证"""
     if auth.username == settings.ADMIN_USERNAME and auth.password == settings.ADMIN_PASSWORD:
-        return TokenResponse(access_token="admin-logged-in-token-2026", token_type="bearer")
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        token = jwt.encode(
+            {"sub": settings.ADMIN_USERNAME, "exp": expires_at},
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM,
+        )
+        return TokenResponse(access_token=token, token_type="bearer")
     raise HTTPException(status_code=401, detail="账号或密码错误")

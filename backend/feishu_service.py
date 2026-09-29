@@ -100,22 +100,40 @@ class FeishuService:
             "Content-Type": "application/json; charset=utf-8"
         }
 
-        # 映射字段（匹配常见多维表格列名，兼顾中英文字段）
-        fields = {
-            "姓名": payload_data.get("name"),
-            "学号": payload_data.get("student_id"),
-            "工号": payload_data.get("student_id"),
-            "班级": payload_data.get("department"),
-            "部门": payload_data.get("department"),
-            "签到时间": payload_data.get("checkin_time"),
-            "匹配度": f"{payload_data.get('similarity', 0) * 100:.1f}%",
-            "打卡设备": "手机移动端"
-        }
-
-        body = {"fields": fields}
-
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
+                # 先读取真实字段：飞书会拒绝任意一个不存在的列名，不能同时发送“学号/工号”等候选列。
+                fields_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields?page_size=100"
+                fields_response = await client.get(fields_url, headers=headers)
+                fields_json = fields_response.json()
+                if fields_json.get("code") != 0:
+                    return False, f"读取多维表格字段失败: {fields_json.get('msg')} (code: {fields_json.get('code')})", fields_json
+
+                definitions = fields_json.get("data", {}).get("items", [])
+                definitions_by_name = {item.get("field_name"): item for item in definitions}
+                fields: Dict[str, Any] = {}
+
+                def put_first(candidates, value):
+                    for candidate in candidates:
+                        definition = definitions_by_name.get(candidate)
+                        if definition:
+                            # 飞书日期列（type=5）要求 Unix 毫秒，文本列则保留可读时间。
+                            if definition.get("type") == 5 and candidate == "签到时间":
+                                value = int(datetime.strptime(value, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
+                            fields[candidate] = value
+                            return
+
+                put_first(["姓名", "Name"], payload_data.get("name"))
+                put_first(["学号/工号", "学号", "工号"], payload_data.get("student_id"))
+                put_first(["部门/班级", "部门", "班级"], payload_data.get("department"))
+                put_first(["签到时间"], payload_data.get("checkin_time"))
+                put_first(["匹配度"], f"{payload_data.get('similarity', 0) * 100:.1f}%")
+                put_first(["打卡设备"], "手机后置摄像头")
+
+                if not fields:
+                    return False, "多维表格中未找到可写入的签到列，请至少创建“姓名”列", {"available_fields": list(definitions_by_name)}
+
+                body = {"fields": fields}
                 response = await client.post(url, headers=headers, json=body)
                 res_json = response.json()
                 if res_json.get("code") == 0:

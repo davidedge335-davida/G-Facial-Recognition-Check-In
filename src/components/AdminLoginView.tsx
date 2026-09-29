@@ -50,23 +50,11 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
       } else if (res.status === 401) {
         setErrorMessage('用户名或密码错误，请核对后重试');
       } else {
-        // 后端可能未运行或代理降级，检测本地凭证
-        if (username.trim() === validUsername && password === validPassword) {
-          sessionStorage.setItem('face_checkin_token', 'admin-logged-in-token-2026');
-          onLoginSuccess();
-        } else {
-          const data = await res.json().catch(() => ({}));
-          setErrorMessage(data.detail || '登录失败，请核对账号密码');
-        }
+        const data = await res.json().catch(() => ({}));
+        setErrorMessage(data.detail || '登录失败，请核对账号密码');
       }
     } catch (err) {
-      // 离线/服务尚未启动时本地兜底
-      if (username.trim() === validUsername && password === validPassword) {
-        sessionStorage.setItem('face_checkin_token', 'admin-logged-in-token-2026');
-        onLoginSuccess();
-      } else {
-        setErrorMessage('用户名或密码错误，请核对后重试');
-      }
+      setErrorMessage('无法连接管理服务，请检查网络或后端状态');
     } finally {
       setIsSubmitting(false);
     }

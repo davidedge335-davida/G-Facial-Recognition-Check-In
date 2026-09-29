@@ -256,6 +256,16 @@ def get_recent_attendance_logs(limit: int = 50) -> List[Dict[str, Any]]:
     conn.close()
     return [dict(row) for row in rows]
 
+def clear_attendance_logs() -> int:
+    """清空签到流水并返回删除条数。"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM attendance_logs")
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
 # ----------------- 飞书系统配置 -----------------
 def get_feishu_config() -> Dict[str, Any]:
     """读取飞书妙搭集成配置"""

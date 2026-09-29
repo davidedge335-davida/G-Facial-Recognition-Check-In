@@ -26,8 +26,6 @@ import { PersonRecord, CheckinLog, FeishuConfigState, CheckinResultState, FastPa
 import {
   INITIAL_PERSONS,
   DEFAULT_FEISHU_CONFIG,
-  extractEmbeddingFromImageData,
-  calculateCosineSimilarity,
   checkDuplicateCheckin
 } from './utils/faceMatcher';
 import {
@@ -263,7 +261,7 @@ export default function App() {
         const usersRes = await fetch('/api/users');
         if (usersRes.ok) {
           const backendUsers = await usersRes.json();
-          if (Array.isArray(backendUsers) && backendUsers.length > 0) {
+          if (Array.isArray(backendUsers)) {
             const mappedPersons: PersonRecord[] = backendUsers.map((u: any) => ({
               id: String(u.id),
               name: u.name,
@@ -428,7 +426,7 @@ export default function App() {
 
   // 处理截帧识别打卡
   const handleCaptureFrame = useCallback(
-    async (frameBase64: string, imageData: ImageData) => {
+    async (frameBase64: string, _imageData: ImageData) => {
       if (isProcessing) return;
       setIsProcessing(true);
       setHasError(false);
@@ -443,6 +441,7 @@ export default function App() {
         let feishuSynced = false;
         let feishuMessage = '';
         let backendHandled = false;
+        let backendMessage = '';
 
         try {
           const res = await fetch('/api/checkin', {
@@ -456,8 +455,8 @@ export default function App() {
 
           if (res.ok) {
             const data = await res.json();
+            backendHandled = true;
             if (data.code === 200) {
-              backendHandled = true;
               matchedPerson = persons.find(p => p.studentId === data.user?.student_id) || {
                 id: String(data.user?.id),
                 name: data.user?.name,
@@ -472,46 +471,22 @@ export default function App() {
               feishuMessage = data.feishu_message || '';
             } else if (data.code === 201) {
               // 重复打卡
-              backendHandled = true;
               isRepeated = true;
               matchedPerson = persons.find(p => p.studentId === data.user?.student_id) || null;
               similarity = data.similarity;
               feishuSynced = false;
               feishuMessage = data.feishu_message || '冷却期内，未重复推送飞书';
-            }
-          }
-        } catch (apiErr) {
-          // 后端未运行或网络不可达时，启用浏览器端纯客户端高精度比对引擎
-        }
-
-        // 客户端本地比对回退逻辑（仅在后端未处理时生效）
-        if (!backendHandled && !matchedPerson && !isRepeated) {
-          const queryEmbedding = extractEmbeddingFromImageData(imageData);
-          let bestScore = 0;
-          let bestPerson: PersonRecord | null = null;
-
-          for (const person of persons) {
-            const score = calculateCosineSimilarity(queryEmbedding, person.embedding);
-            if (score > bestScore) {
-              bestScore = score;
-              bestPerson = person;
-            }
-          }
-
-          // 阈值 0.60
-          if (bestPerson && bestScore >= 0.58) {
-            matchedPerson = bestPerson;
-            similarity = bestScore;
-
-            // 客户端防重复打卡判定 (5分钟 = 300秒)
-            const dup = checkDuplicateCheckin(matchedPerson.id, logs, 300);
-            if (dup.isDuplicate) {
-              isRepeated = true;
-              lastTimeStr = dup.lastTime || '';
+            } else {
+              similarity = Number(data.similarity || 0);
+              backendMessage = data.message || '人脸识别未通过';
             }
           } else {
-            similarity = bestScore;
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.detail || `签到服务异常 (HTTP ${res.status})`);
           }
+        } catch (apiErr: any) {
+          // 浏览器端的像素摘要不是人脸特征，线上不得降级为本地伪比对并误报签到。
+          throw new Error(apiErr?.message || '无法连接签到服务，请检查后端和网络');
         }
 
         const nowStr = new Date().toLocaleString();
@@ -627,7 +602,7 @@ export default function App() {
           setStatusText(`签到成功：${matchedPerson.name}`);
           setCheckinResult({
             status: 'success',
-            message: '人脸比对通过，签到数据已成功同步！',
+            message: feishuSynced ? '人脸比对通过，签到数据已同步飞书！' : '人脸比对通过，但飞书同步失败，请管理员检查配置。',
             user: matchedPerson,
             similarity,
             checkinTime: nowStr,
@@ -661,7 +636,7 @@ export default function App() {
           setStatusText('未匹配到人员，请联系管理员录入照片');
           setCheckinResult({
             status: 'not_found',
-            message: `当前人脸与底库所有人员相似度最高为 ${(similarity * 100).toFixed(1)}%（低于 60% 阈值），请确认已在管理后台录入底库。`,
+            message: backendMessage || `当前人脸与底库所有人员相似度最高为 ${(similarity * 100).toFixed(1)}%（低于 60% 阈值），请确认已在管理后台录入底库。`,
             similarity
           });
         }
